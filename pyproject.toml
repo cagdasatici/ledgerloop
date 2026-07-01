@@ -1,0 +1,16 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ledgerloop"
+version = "0.1.0"
+description = "Cost-aware loop orchestrator with persistent memory and deterministic mock-first contracts."
+requires-python = ">=3.9"
+
+[project.scripts]
+ledgerloop = "orchestrator.cli:main"
+loop-orchestrator = "orchestrator.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
