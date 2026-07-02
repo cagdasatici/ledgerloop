@@ -47,7 +47,7 @@ class ConfigLoadingTests(unittest.TestCase):
         self.assertTrue(provider.supports_cache)
 
     def test_load_config_reads_json_file(self):
-        with tempfile.TemporaryDirectory(dir="/private/tmp") as tmpdir:
+        with tempfile.TemporaryDirectory() as tmpdir:
             path = pathlib.Path(tmpdir) / "config.json"
             path.write_text(json.dumps({"budget": {"max_usd": 0.5}}))
 

@@ -36,7 +36,7 @@ class CliTests(unittest.TestCase):
     def test_simulated_failure_returns_blocked_and_writes_events(self):
         stdout = io.StringIO()
         stderr = io.StringIO()
-        with tempfile.TemporaryDirectory(dir="/private/tmp") as tmpdir:
+        with tempfile.TemporaryDirectory() as tmpdir:
             events_path = str(pathlib.Path(tmpdir) / "events.json")
             code = main(
                 [
@@ -61,7 +61,7 @@ class CliTests(unittest.TestCase):
     def test_config_file_budget_blocks_run(self):
         stdout = io.StringIO()
         stderr = io.StringIO()
-        with tempfile.TemporaryDirectory(dir="/private/tmp") as tmpdir:
+        with tempfile.TemporaryDirectory() as tmpdir:
             config_path = pathlib.Path(tmpdir) / "config.json"
             config_path.write_text(
                 json.dumps({"budget": {"max_usd": 0.0000001, "reserved_final_report_usd": 0.0}})
