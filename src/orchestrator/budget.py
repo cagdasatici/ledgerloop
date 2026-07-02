@@ -45,12 +45,12 @@ class BudgetLedger:
     def estimate_cost(self, provider_model: str, usage: UsageMetadata) -> float:
         provider = self.providers.get(provider_model)
         pricing = provider.pricing if provider else ModelPricing()
-        return (
-            usage.input_tokens * pricing.input_per_million
-            + usage.output_tokens * pricing.output_per_million
-            + usage.cache_read_tokens * pricing.cache_read_per_million
-            + usage.cache_write_tokens * pricing.cache_write_per_million
-        ) / 1_000_000
+        return pricing.cost_for(
+            usage.input_tokens,
+            usage.output_tokens,
+            usage.cache_read_tokens,
+            usage.cache_write_tokens,
+        )
 
     def remaining_usd(self) -> float:
         return max(0.0, self.config.max_usd - self.actual_usd)

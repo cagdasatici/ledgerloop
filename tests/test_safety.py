@@ -21,6 +21,31 @@ class SafetyPolicyTests(unittest.TestCase):
         self.assertTrue(decision.allowed)
         self.assertEqual(decision.risk, "medium")
 
+    def test_evaluate_task_blocks_dependency_task_without_isolation(self):
+        policy = SafetyPolicy(project_root="/tmp/project")
+        decision = policy.evaluate_task("install the requests dependency", env={})
+
+        self.assertFalse(decision.allowed)
+        self.assertEqual(decision.action, "dependency_change")
+        self.assertEqual(decision.risk, "high")
+
+    def test_evaluate_task_allows_dependency_task_inside_project_env(self):
+        policy = SafetyPolicy(project_root="/tmp/project")
+        decision = policy.evaluate_task(
+            "install the requests dependency",
+            env={"VIRTUAL_ENV": "/tmp/project/.venv"},
+        )
+
+        self.assertTrue(decision.allowed)
+        self.assertEqual(decision.action, "dependency_change")
+
+    def test_evaluate_task_allows_non_dependency_task(self):
+        policy = SafetyPolicy(project_root="/tmp/project")
+        decision = policy.evaluate_task("implement a prompt hashing improvement", env={})
+
+        self.assertTrue(decision.allowed)
+        self.assertEqual(decision.action, "execute")
+
 
 if __name__ == "__main__":
     unittest.main()

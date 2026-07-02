@@ -19,12 +19,51 @@ class SafetyDecision:
     reason: str
 
 
+DEPENDENCY_TERMS = (
+    "install",
+    "dependency",
+    "dependencies",
+    "lockfile",
+    "requirements",
+    "pip ",
+    "pip install",
+    "package",
+    "packages",
+    "poetry",
+    "npm",
+)
+
+
 class SafetyPolicy:
     """Classifies actions and blocks unsafe execution."""
 
     def __init__(self, config: Optional[SafetyConfig] = None, project_root: str = "."):
         self.config = config or SafetyConfig()
         self.project_root = os.path.abspath(project_root)
+
+    def evaluate_task(
+        self,
+        description: str,
+        command: str = "",
+        env: Optional[Dict[str, str]] = None,
+    ) -> SafetyDecision:
+        """Gate a task before execution.
+
+        This is the single entry point the loop calls. Dependency-changing
+        tasks must run inside an approved isolated environment; everything else
+        is allowed through at its classified risk level.
+        """
+
+        risk = self.classify_action(description, command)
+        text = (description + " " + command).lower()
+        if any(term in text for term in DEPENDENCY_TERMS):
+            dependency = self.verify_dependency_environment(env=env)
+            if not dependency.allowed:
+                return SafetyDecision("dependency_change", "high", False, dependency.reason)
+            return SafetyDecision("dependency_change", risk, True, dependency.reason)
+        return SafetyDecision(
+            "execute", risk, True, "No isolation-sensitive action detected."
+        )
 
     def classify_action(self, action: str, command: str = "") -> str:
         action_l = action.lower()

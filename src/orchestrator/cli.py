@@ -7,7 +7,7 @@ import sys
 from dataclasses import replace
 from typing import List, Optional, TextIO
 
-from orchestrator.config import BudgetConfig, OrchestratorConfig, default_config
+from orchestrator.config import BudgetConfig, OrchestratorConfig, default_config, load_config
 from orchestrator.loop import LoopResult, LoopRunner, ValidationResult
 from orchestrator.memory import MemoryStore
 
@@ -19,6 +19,10 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("goal", help="User goal to run through the mock loop.")
     parser.add_argument("--task-id", default="task_cli_0001", help="Stable task id for the run.")
+    parser.add_argument(
+        "--config",
+        help="Path to a JSON or TOML config file with budget, safety, and provider settings.",
+    )
     parser.add_argument(
         "--memory-path",
         default="data/memory/project_store.json",
@@ -50,7 +54,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def make_config(args: argparse.Namespace) -> OrchestratorConfig:
-    base = default_config()
+    base = load_config(args.config) if args.config else default_config()
     budget = base.budget
     overrides = {}
     if args.max_usd is not None:
@@ -102,6 +106,8 @@ def print_summary(result: LoopResult, stdout: TextIO) -> None:
     stdout.write("risk: %s\n" % routing.risk)
     stdout.write("message: %s\n" % result.message)
     stdout.write("events: %d\n" % len(result.events))
+    stdout.write("artifacts: %d\n" % len(result.artifacts))
+    stdout.write("changed_artifacts: %d\n" % len(result.changed_artifacts))
     stdout.write("actual_usd: %.8f\n" % result.budget["actual_usd"])
     stdout.write("prompt_hash: %s\n" % result.prompt_hash)
     stdout.write("cacheable_hash: %s\n" % result.cacheable_hash)

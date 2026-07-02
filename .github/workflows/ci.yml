@@ -1,0 +1,24 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.9", "3.11", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Run unit tests
+        run: python -m unittest discover -s tests -v
+      - name: Smoke-run the CLI
+        run: |
+          PYTHONPATH=src python -m orchestrator "implement a small budget ledger improvement"
+          PYTHONPATH=src python -m orchestrator --json "explain LedgerLoop architecture" > /dev/null

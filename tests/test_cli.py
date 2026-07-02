@@ -58,6 +58,23 @@ class CliTests(unittest.TestCase):
         self.assertIn("loop status: blocked", stderr.getvalue())
         self.assertEqual(events[-1]["state"], "report")
 
+    def test_config_file_budget_blocks_run(self):
+        stdout = io.StringIO()
+        stderr = io.StringIO()
+        with tempfile.TemporaryDirectory(dir="/private/tmp") as tmpdir:
+            config_path = pathlib.Path(tmpdir) / "config.json"
+            config_path.write_text(
+                json.dumps({"budget": {"max_usd": 0.0000001, "reserved_final_report_usd": 0.0}})
+            )
+            code = main(
+                ["--config", str(config_path), "implement a tiny improvement"],
+                stdout=stdout,
+                stderr=stderr,
+            )
+
+        self.assertEqual(code, 2)
+        self.assertIn("status: blocked", stdout.getvalue())
+
 
 if __name__ == "__main__":
     unittest.main()

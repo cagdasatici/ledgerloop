@@ -3,11 +3,12 @@
 from dataclasses import dataclass, field
 from typing import Callable, Dict, List, Optional
 
+from orchestrator.artifacts import ArtifactStore
 from orchestrator.budget import BudgetExceeded, BudgetLedger
 from orchestrator.config import OrchestratorConfig, default_config
 from orchestrator.events import EventLog, utc_now_iso
 from orchestrator.memory import MemoryStore
-from orchestrator.prompts import assemble_prompt_bundle, stable_memory_summary
+from orchestrator.prompts import PromptBundle, assemble_prompt_bundle, stable_memory_summary
 from orchestrator.providers import FakeProviderAdapter, ProviderAdapter
 from orchestrator.router import Router, RoutingDecision
 from orchestrator.safety import SafetyPolicy
@@ -66,6 +67,8 @@ class LoopResult:
     prompt_hash: str
     cacheable_hash: str
     message: str
+    artifacts: List[Dict[str, object]] = field(default_factory=list)
+    changed_artifacts: List[Dict[str, object]] = field(default_factory=list)
 
     def to_dict(self) -> Dict[str, object]:
         return {
@@ -77,6 +80,8 @@ class LoopResult:
             "prompt_hash": self.prompt_hash,
             "cacheable_hash": self.cacheable_hash,
             "message": self.message,
+            "artifacts": list(self.artifacts),
+            "changed_artifacts": list(self.changed_artifacts),
         }
 
 
@@ -96,7 +101,12 @@ class LoopRunner:
         safety: Optional[SafetyPolicy] = None,
     ) -> None:
         self.config = config or default_config()
-        self.router = router or Router()
+        self.router = router or Router(
+            pricing={
+                model_id: provider.pricing
+                for model_id, provider in self.config.providers.items()
+            }
+        )
         self.memory = memory or MemoryStore(project_id=self.config.project_id)
         self.providers = providers or {
             model_id: FakeProviderAdapter(model_id=model_id)
@@ -105,6 +115,7 @@ class LoopRunner:
         self.events = events or EventLog()
         self.safety = safety or SafetyPolicy(self.config.safety)
         self.budget = BudgetLedger(self.config.budget, self.config.providers)
+        self.artifacts = ArtifactStore()
 
     def run(
         self,
@@ -134,6 +145,24 @@ class LoopRunner:
             )
             return self._result("blocked", envelope, routing, "", "", "Approval required.")
 
+        safety_decision = self.safety.evaluate_task(user_goal)
+        self.events.append(
+            task_id,
+            "safety_gate",
+            "safety",
+            status="succeeded" if safety_decision.allowed else "blocked",
+            message=safety_decision.reason,
+        )
+        if not safety_decision.allowed:
+            self.events.append(
+                task_id,
+                "report",
+                "reporter",
+                status="blocked",
+                message=safety_decision.reason,
+            )
+            return self._result("blocked", envelope, routing, "", "", safety_decision.reason)
+
         retrieved = self.memory.retrieve(user_goal)
         self.events.append(
             task_id,
@@ -142,17 +171,7 @@ class LoopRunner:
             message="Retrieved %d memory items." % len(retrieved),
         )
 
-        prompt_bundle = assemble_prompt_bundle(
-            system_contract={
-                "role": "bounded local code-build-audit orchestrator",
-                "safety": "use configured gates and budgets",
-                "output": "structured loop events",
-            },
-            project_summary={"project_id": self.config.project_id},
-            memory_summary=stable_memory_summary(self.memory.to_prompt_records(retrieved)),
-            dynamic_context={"recent_events": self.events.to_list()[-3:]},
-            current_task_payload={"task": envelope.to_dict(), "routing": routing.to_dict()},
-        )
+        prompt_bundle = self._build_bundle(envelope, routing, retrieved, None, {})
         self.events.append(
             task_id,
             "plan",
@@ -163,10 +182,17 @@ class LoopRunner:
 
         provider = self._select_provider(routing)
         repair_attempts: Dict[str, int] = {}
+        last_failure: Optional[ValidationResult] = None
         last_message = ""
         final_status = "failed"
 
         for iteration in range(1, self.config.budget.max_iterations + 1):
+            if last_failure is not None:
+                # Closed-loop repair: rebuild the dynamic sections so the next
+                # attempt sees what failed. Cacheable prefix stays stable.
+                prompt_bundle = self._build_bundle(
+                    envelope, routing, retrieved, last_failure, repair_attempts
+                )
             try:
                 response_text = self._execute_provider(
                     provider=provider,
@@ -195,6 +221,13 @@ class LoopRunner:
                 )
 
             validation = validator(iteration, response_text) if validator else ValidationResult.success()
+            validation_artifact = self.artifacts.add(
+                task_id,
+                "validation",
+                validation.message,
+                summary=validation.message,
+                iteration=iteration,
+            )
             self.events.append(
                 task_id,
                 "validate",
@@ -204,16 +237,25 @@ class LoopRunner:
                 failure_fingerprint=validation.failure_fingerprint,
                 status="succeeded" if validation.passed else "failed",
                 message=validation.message,
+                output_refs=[validation_artifact.artifact_id],
             )
             if not validation.passed:
-                final_status, last_message = self._handle_repair(
-                    task_id, validation, repair_attempts, iteration
+                last_failure = validation
+                final_status, last_message, provider = self._handle_repair(
+                    task_id, validation, repair_attempts, iteration, provider
                 )
                 if final_status == "repairing":
                     continue
                 break
 
             audit = auditor(iteration, response_text) if auditor else ValidationResult.success("audit ok")
+            audit_artifact = self.artifacts.add(
+                task_id,
+                "audit",
+                audit.message,
+                summary=audit.message,
+                iteration=iteration,
+            )
             self.events.append(
                 task_id,
                 "audit",
@@ -223,9 +265,13 @@ class LoopRunner:
                 failure_fingerprint=audit.failure_fingerprint,
                 status="succeeded" if audit.passed else "failed",
                 message=audit.message,
+                output_refs=[audit_artifact.artifact_id],
             )
             if not audit.passed:
-                final_status, last_message = self._handle_repair(task_id, audit, repair_attempts, iteration)
+                last_failure = audit
+                final_status, last_message, provider = self._handle_repair(
+                    task_id, audit, repair_attempts, iteration, provider
+                )
                 if final_status == "repairing":
                     continue
                 break
@@ -244,7 +290,20 @@ class LoopRunner:
             final_status = "blocked"
             last_message = "Iteration limit reached."
 
-        self.events.append(task_id, "report", "reporter", status=final_status, message=last_message)
+        report_artifact = self.artifacts.add(
+            task_id,
+            "report",
+            "%s: %s" % (final_status, last_message),
+            summary="Final report (%s)." % final_status,
+        )
+        self.events.append(
+            task_id,
+            "report",
+            "reporter",
+            status=final_status,
+            message=last_message,
+            output_refs=[report_artifact.artifact_id],
+        )
         return self._result(
             final_status,
             envelope,
@@ -270,6 +329,13 @@ class LoopRunner:
             reason="execute",
             estimated_usd=estimated_usd,
         )
+        artifact = self.artifacts.add(
+            task_id,
+            "edit",
+            response.text,
+            summary="Builder output from %s." % provider.model_id,
+            iteration=iteration,
+        )
         self.events.append(
             task_id,
             "execute",
@@ -279,6 +345,7 @@ class LoopRunner:
             status="succeeded",
             cost={"estimated_usd": record.estimated_usd, "actual_usd": record.actual_usd},
             message=response.text,
+            output_refs=[artifact.artifact_id],
         )
         return response.text
 
@@ -288,11 +355,34 @@ class LoopRunner:
         result: ValidationResult,
         repair_attempts: Dict[str, int],
         iteration: int,
+        provider: ProviderAdapter,
     ) -> tuple:
         fingerprint = result.failure_fingerprint or "unknown"
         attempts = repair_attempts.get(fingerprint, 0)
         if attempts >= self.config.budget.max_repair_attempts:
-            message = "Repair limit reached for %s." % fingerprint
+            stronger = self._stronger_provider(provider)
+            if stronger is not None:
+                # Spec: escalate to a stronger tier before pausing at a gate.
+                repair_attempts[fingerprint] = 0
+                message = "Escalating %s from %s to %s after repair limit." % (
+                    fingerprint,
+                    provider.model_id,
+                    stronger.model_id,
+                )
+                self.events.append(
+                    task_id,
+                    "repair",
+                    "planner",
+                    provider=stronger.model_id,
+                    iteration=iteration,
+                    repair_attempt=attempts,
+                    failure_fingerprint=fingerprint,
+                    status="escalated",
+                    message=message,
+                )
+                return "repairing", message, stronger
+
+            message = "Repair limit reached for %s and no stronger tier available." % fingerprint
             self.events.append(
                 task_id,
                 "repair",
@@ -303,7 +393,7 @@ class LoopRunner:
                 status="blocked",
                 message=message,
             )
-            return "blocked", message
+            return "blocked", message, provider
 
         attempts += 1
         repair_attempts[fingerprint] = attempts
@@ -317,7 +407,59 @@ class LoopRunner:
             status="scheduled",
             message="Scheduling repair attempt %d for %s." % (attempts, fingerprint),
         )
-        return "repairing", "Repair scheduled."
+        return "repairing", "Repair scheduled.", provider
+
+    def _stronger_provider(self, current: ProviderAdapter) -> Optional[ProviderAdapter]:
+        """Return the cheapest configured provider stronger than the current one.
+
+        Strength is ordered by configured input pricing; the mock and any real
+        config both express tiering that way.
+        """
+
+        current_config = self.config.providers.get(current.model_id)
+        if current_config is None:
+            return None
+        current_price = current_config.pricing.input_per_million
+        candidates = [
+            (provider_config.pricing.input_per_million, model_id)
+            for model_id, provider_config in self.config.providers.items()
+            if provider_config.pricing.input_per_million > current_price
+            and model_id in self.providers
+        ]
+        if not candidates:
+            return None
+        candidates.sort()
+        return self.providers[candidates[0][1]]
+
+    def _build_bundle(
+        self,
+        envelope: TaskEnvelope,
+        routing: RoutingDecision,
+        retrieved: List,
+        last_failure: Optional[ValidationResult],
+        repair_attempts: Dict[str, int],
+    ) -> PromptBundle:
+        repair_context: Dict[str, object] = {}
+        if last_failure is not None:
+            repair_context = {
+                "failure_fingerprint": last_failure.failure_fingerprint,
+                "failure_message": last_failure.message,
+                "repair_attempts": dict(repair_attempts),
+            }
+        return assemble_prompt_bundle(
+            system_contract={
+                "role": "bounded local code-build-audit orchestrator",
+                "safety": "use configured gates and budgets",
+                "output": "structured loop events",
+            },
+            project_summary={"project_id": self.config.project_id},
+            memory_summary=stable_memory_summary(self.memory.to_prompt_records(retrieved)),
+            dynamic_context={
+                "recent_events": self.events.to_list()[-3:],
+                "repair_context": repair_context,
+            },
+            current_task_payload={"task": envelope.to_dict(), "routing": routing.to_dict()},
+        )
 
     def _select_provider(self, routing: RoutingDecision) -> ProviderAdapter:
         for model_id in routing.provider_preference:
@@ -345,4 +487,6 @@ class LoopRunner:
             prompt_hash=prompt_hash,
             cacheable_hash=cacheable_hash,
             message=message,
+            artifacts=self.artifacts.to_list(),
+            changed_artifacts=self.artifacts.changed(),
         )
