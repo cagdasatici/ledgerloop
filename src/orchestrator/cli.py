@@ -10,6 +10,7 @@ from typing import List, Optional, TextIO
 from orchestrator.config import BudgetConfig, OrchestratorConfig, default_config, load_config
 from orchestrator.loop import LoopResult, LoopRunner, ValidationResult
 from orchestrator.memory import MemoryStore
+from orchestrator.sqlite_store import SQLiteEventLog, SQLiteMemoryStore
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -26,7 +27,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--memory-path",
         default="data/memory/project_store.json",
-        help="Path to JSON memory store.",
+        help="Path to JSON memory store when --sqlite-path is not used.",
+    )
+    parser.add_argument(
+        "--sqlite-path",
+        help="Use SQLite-backed memory and event persistence at this path.",
     )
     parser.add_argument("--json", action="store_true", help="Emit the full result as JSON.")
     parser.add_argument("--events-out", help="Write event log JSON to this path.")
@@ -124,8 +129,13 @@ def main(
     args = parser.parse_args(argv)
 
     config = make_config(args)
-    memory = MemoryStore.load(config.project_id, args.memory_path)
-    runner = LoopRunner(config=config, memory=memory)
+    if args.sqlite_path:
+        memory = SQLiteMemoryStore.load(config.project_id, args.sqlite_path)
+        events = SQLiteEventLog(args.sqlite_path)
+    else:
+        memory = MemoryStore.load(config.project_id, args.memory_path)
+        events = None
+    runner = LoopRunner(config=config, memory=memory, events=events)
     result = runner.run(args.goal, task_id=args.task_id, validator=make_validator(args))
 
     if args.events_out:

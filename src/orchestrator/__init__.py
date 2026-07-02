@@ -8,6 +8,7 @@ from orchestrator.memory import MemoryItem, MemoryStore
 from orchestrator.providers import FakeProviderAdapter, ProviderResponse, UsageMetadata
 from orchestrator.router import Router, RoutingDecision
 from orchestrator.safety import SafetyDecision, SafetyPolicy, SafetyViolation
+from orchestrator.sqlite_store import SQLiteEventLog, SQLiteMemoryStore
 
 __all__ = [
     "Artifact",
@@ -27,6 +28,8 @@ __all__ = [
     "SafetyDecision",
     "SafetyPolicy",
     "SafetyViolation",
+    "SQLiteEventLog",
+    "SQLiteMemoryStore",
     "TaskEnvelope",
     "UsageMetadata",
     "ValidationResult",

@@ -12,7 +12,7 @@ providers.
 **Phase 1 complete and hardened.** All ten minimum acceptance criteria from the
 functional spec are met. Published at
 [github.com/cagdasatici/ledgerloop](https://github.com/cagdasatici/ledgerloop)
-(private) with GitHub Actions CI (Python 3.9 / 3.11 / 3.13), green. 31 unit
+(private) with GitHub Actions CI (Python 3.9 / 3.11 / 3.13), green. 34 unit
 tests passing.
 
 ## Architecture
@@ -32,6 +32,7 @@ under `src/orchestrator/`:
 | `safety.py` | Action risk classification + dependency-environment isolation checks, exposed via `evaluate_task`. |
 | `artifacts.py` | Structured artifact registry (builder edits, validation/audit results, report) with content hashes. |
 | `events.py` | Structured, timezone-aware loop event log. |
+| `sqlite_store.py` | SQLite-backed memory and event persistence with schema migration, WAL mode, busy timeout, and transactional writes. |
 | `cli.py` | CLI for running mock loops (`--config`, `--json`, budget/repair overrides, failure simulation). |
 
 ## What's implemented
@@ -46,6 +47,7 @@ under `src/orchestrator/`:
 - **Closed-loop repair + escalation** — failure fingerprint, message, and attempt counts are fed back into the next prompt; at the repair cap the loop escalates to the next stronger provider tier (ordered by input pricing) and resets the counter, blocking only when no stronger tier remains.
 - **Artifact tracking** — builder edits, validation/audit results, and the final report are recorded with content hashes; events carry `output_refs`; `LoopResult` exposes `artifacts` and `changed_artifacts`.
 - **Config files** — JSON or TOML, layered onto the mock defaults; unknown keys ignored.
+- **SQLite persistence** — opt-in SQLite backend for memories and event logs via `--sqlite-path`; JSON remains the bootstrap default.
 - **CI** — unit tests + CLI smoke runs on three Python versions.
 
 ## Running it
@@ -67,6 +69,9 @@ PYTHONPATH=src python3 -m orchestrator \
 
 # with a config file
 PYTHONPATH=src python3 -m orchestrator --config my-config.json "..."
+
+# with SQLite-backed memory and event persistence
+PYTHONPATH=src python3 -m orchestrator --sqlite-path data/ledgerloop.db "..."
 ```
 
 ## Docs

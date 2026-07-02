@@ -7,12 +7,10 @@ capability into `docs/PROJECT_SUMMARY.md`.
 
 ## Next up (highest value)
 
-1. **SQLite memory/event backend** — atomic writes, migrations, and concurrency
-   safety, replacing the JSON store once the schema has stabilised.
-2. **Real provider adapters** — Claude / Gemini / OpenAI / local, behind the
+1. **Real provider adapters** — Claude / Gemini / OpenAI / local, behind the
    existing `ProviderAdapter` interface. Add interface contract tests before
    any real API is called.
-3. **Real token accounting hooks** — consume provider usage metadata where
+2. **Real token accounting hooks** — consume provider usage metadata where
    available instead of estimating from the mock adapter.
 
 ## Core architecture
@@ -62,3 +60,4 @@ capability into `docs/PROJECT_SUMMARY.md`.
 - ~~Bounded repair with tier escalation before pausing; closed-loop failure context in the prompt.~~
 - ~~Unify router cost estimate with the budget ledger's pricing.~~
 - ~~Structured artifact tracking for changed files / results / reports.~~
+- ~~SQLite memory/event backend with migrations, WAL mode, busy timeout, and transactional writes.~~

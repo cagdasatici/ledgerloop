@@ -56,6 +56,14 @@ PYTHONPATH=src python3 -m orchestrator \
   "implement a small budget ledger improvement"
 ```
 
+Use SQLite-backed memory and event persistence:
+
+```bash
+PYTHONPATH=src python3 -m orchestrator \
+  --sqlite-path data/ledgerloop.db \
+  "implement a small budget ledger improvement"
+```
+
 Example config (all sections optional; unset fields keep the mock defaults):
 
 ```json
