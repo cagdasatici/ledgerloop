@@ -6,7 +6,14 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / "src"))
 
 from orchestrator.config import BudgetConfig, OrchestratorConfig, default_config
 from orchestrator.loop import LoopRunner, ValidationResult
-from orchestrator.safety import SafetyPolicy
+from orchestrator.providers import (
+    FakeProviderAdapter,
+    ProviderAuthError,
+    ProviderMalformedOutputError,
+    ProviderTimeoutError,
+    RetryPolicy,
+)
+from orchestrator.safety import ProposedAction, SafetyPolicy
 
 
 class LoopRunnerTests(unittest.TestCase):
@@ -120,6 +127,133 @@ class LoopRunnerTests(unittest.TestCase):
         self.assertEqual(result.changed_artifacts[0]["kind"], "edit")
         execute_events = [event for event in result.events if event["state"] == "execute"]
         self.assertTrue(execute_events[0]["output_refs"])
+
+    def test_provider_timeout_retries_before_success(self):
+        config = default_config()
+        providers = {
+            model_id: FakeProviderAdapter(model_id=model_id)
+            for model_id in config.providers
+        }
+        providers["balanced-code-model"] = FakeProviderAdapter(
+            model_id="balanced-code-model",
+            failures=[ProviderTimeoutError("temporary timeout", "balanced-code-model")],
+        )
+        runner = LoopRunner(
+            config=config,
+            providers=providers,
+            retry_policy=RetryPolicy(max_attempts=2),
+        )
+
+        result = runner.run("implement retry handling", task_id="task_retry")
+
+        self.assertEqual(result.status, "succeeded")
+        states = [event["state"] for event in result.events]
+        self.assertIn("provider_error", states)
+        self.assertIn("provider_retry", states)
+
+    def test_provider_auth_failure_blocks_without_repair_attempt(self):
+        config = default_config()
+        providers = {
+            model_id: FakeProviderAdapter(model_id=model_id)
+            for model_id in config.providers
+        }
+        providers["balanced-code-model"] = FakeProviderAdapter(
+            model_id="balanced-code-model",
+            failures=[ProviderAuthError("bad credentials", "balanced-code-model")],
+        )
+        runner = LoopRunner(config=config, providers=providers)
+
+        result = runner.run("implement auth failure handling", task_id="task_auth")
+
+        self.assertEqual(result.status, "blocked")
+        self.assertIn("Provider auth failure", result.message)
+        self.assertFalse([event for event in result.events if event["state"] == "repair"])
+
+    def test_malformed_provider_output_consumes_repair_and_escalates(self):
+        base = default_config()
+        config = OrchestratorConfig(
+            project_id=base.project_id,
+            budget=BudgetConfig(max_repair_attempts=0, max_iterations=3),
+            safety=base.safety,
+            providers=base.providers,
+        )
+        providers = {
+            model_id: FakeProviderAdapter(model_id=model_id)
+            for model_id in config.providers
+        }
+        providers["balanced-code-model"] = FakeProviderAdapter(
+            model_id="balanced-code-model",
+            failures=[
+                ProviderMalformedOutputError(
+                    "provider returned invalid schema", "balanced-code-model"
+                )
+            ],
+        )
+        runner = LoopRunner(
+            config=config,
+            providers=providers,
+            retry_policy=RetryPolicy(max_attempts=1),
+        )
+
+        result = runner.run("implement malformed output handling", task_id="task_malformed")
+
+        self.assertEqual(result.status, "succeeded")
+        repair_events = [event for event in result.events if event["state"] == "repair"]
+        self.assertEqual(repair_events[0]["status"], "escalated")
+        self.assertEqual(repair_events[0]["failure_fingerprint"], "provider:malformed_output:balanced-code-model")
+
+    def test_action_time_safety_blocks_builder_proposed_dependency_install(self):
+        config = default_config()
+        providers = {
+            model_id: FakeProviderAdapter(model_id=model_id)
+            for model_id in config.providers
+        }
+        providers["balanced-code-model"] = FakeProviderAdapter(
+            model_id="balanced-code-model",
+            actions=[
+                ProposedAction(
+                    action_id="act_install",
+                    kind="command",
+                    description="Install a dependency",
+                    command="pip install requests",
+                )
+            ],
+        )
+        runner = LoopRunner(config=config, providers=providers, safety=SafetyPolicy(project_root="/tmp/project"))
+
+        result = runner.run("implement parser support", task_id="task_action_safety")
+
+        self.assertEqual(result.status, "blocked")
+        provider_call_events = [event for event in result.events if event["state"] == "provider_call"]
+        self.assertEqual(len(provider_call_events), 1)
+        self.assertTrue(provider_call_events[0]["cost"])
+        gate_events = [event for event in result.events if event["state"] == "action_safety_gate"]
+        self.assertEqual(gate_events[0]["status"], "blocked")
+        self.assertEqual(gate_events[0]["input_refs"], ["act_install"])
+
+    def test_action_time_safety_allows_low_risk_builder_action(self):
+        config = default_config()
+        providers = {
+            model_id: FakeProviderAdapter(model_id=model_id)
+            for model_id in config.providers
+        }
+        providers["balanced-code-model"] = FakeProviderAdapter(
+            model_id="balanced-code-model",
+            actions=[
+                ProposedAction(
+                    action_id="act_read",
+                    kind="read",
+                    description="Inspect README",
+                )
+            ],
+        )
+        runner = LoopRunner(config=config, providers=providers)
+
+        result = runner.run("implement a safe inspection", task_id="task_safe_action")
+
+        self.assertEqual(result.status, "succeeded")
+        gate_events = [event for event in result.events if event["state"] == "action_safety_gate"]
+        self.assertEqual(gate_events[0]["status"], "succeeded")
 
 
 if __name__ == "__main__":

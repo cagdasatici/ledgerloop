@@ -12,7 +12,7 @@ providers.
 **Phase 1 complete and hardened.** All ten minimum acceptance criteria from the
 functional spec are met. Published at
 [github.com/cagdasatici/ledgerloop](https://github.com/cagdasatici/ledgerloop)
-(private) with GitHub Actions CI (Python 3.9 / 3.11 / 3.13). 40 unit tests
+(private) with GitHub Actions CI (Python 3.9 / 3.11 / 3.13). 51 unit tests
 passing locally.
 
 ## Architecture
@@ -22,14 +22,14 @@ under `src/orchestrator/`:
 
 | Module | Responsibility |
 |--------|----------------|
-| `loop.py` | Bounded execution state machine: intake → route → safety gate → resolve memory → plan → execute → validate → audit → repair/escalate → consolidate → report. |
+| `loop.py` | Bounded execution state machine: intake → route → intake safety gate → resolve memory → plan → execute provider with retry policy → action-time safety gate → validate → audit → repair/escalate → consolidate → report. |
 | `router.py` | Deterministic routing by intent, risk, and complexity. Emits a USD estimate computed from the same pricing the ledger enforces. |
 | `budget.py` | Budget ledger with hard spend/token circuit breakers; estimates before calls, records actuals after. |
 | `config.py` | Config contracts + `load_config`/`config_from_dict` (JSON/TOML). `ModelPricing.cost_for` is the single token→USD formula. |
 | `memory.py` | JSON-backed memory with dedupe, versioning, supersession, scoped retrieval. |
 | `prompts.py` | Five-section deterministic prompt builder with full and cacheable-prefix hashes. |
-| `providers.py` | Provider adapter interface + deterministic `FakeProviderAdapter`. |
-| `safety.py` | Action risk classification + dependency-environment isolation checks, exposed via `evaluate_task`. |
+| `providers.py` | Provider adapter interface, deterministic `FakeProviderAdapter`, provider error taxonomy, and retry policy. |
+| `safety.py` | Intake risk classification plus execution-time `ProposedAction` gating for commands, diffs, installs, and other builder-proposed actions. |
 | `artifacts.py` | Structured artifact registry (builder edits, validation/audit results, report) with content hashes. |
 | `events.py` | Structured, timezone-aware loop event log. |
 | `sqlite_store.py` | SQLite-backed memory and event persistence with schema migrations, WAL mode, busy timeout, transactional memory UPSERTs, project/run-scoped events, and persisted run results. |
@@ -45,6 +45,8 @@ under `src/orchestrator/`:
 - **Scoped memory** — similarity-based retrieval that excludes irrelevant items; repeated lessons are merged, not appended.
 - **Safety gate wired into the loop** — dependency-changing tasks are rejected unless an approved isolated environment (project-local venv / configured container) is active; a `safety_gate` event is always emitted.
 - **Closed-loop repair + escalation** — failure fingerprint, message, and attempt counts are fed back into the next prompt; at the repair cap the loop escalates to the next stronger provider tier (ordered by input pricing) and resets the counter, blocking only when no stronger tier remains.
+- **Provider error taxonomy** — timeout, rate-limit, auth, refusal, and malformed-output failures define retryability and whether they consume a repair attempt. Retry policy records structured retry events without sleeping inside the core loop.
+- **Action-time safety** — builder-proposed actions are represented as `ProposedAction` records and pass through `SafetyPolicy.evaluate_action()` before the loop accepts them as executed.
 - **Artifact tracking** — builder edits, validation/audit results, and the final report are recorded with content hashes; events carry `output_refs`; `LoopResult` exposes `artifacts` and `changed_artifacts`.
 - **Config files** — JSON or TOML, layered onto the mock defaults; unknown keys ignored.
 - **SQLite persistence** — opt-in SQLite backend for memories and event logs via `--sqlite-path`; JSON remains the bootstrap default. Memory writes use per-item UPSERTs, durable events are project/run scoped, and final run results are persisted.
