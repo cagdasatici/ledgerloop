@@ -7,12 +7,25 @@ capability into `docs/PROJECT_SUMMARY.md`.
 
 ## Next up (highest value)
 
-1. **Real provider adapters** — Claude / Gemini / OpenAI / local, behind the
+Order confirmed 2026-07-04: the two design contracts come *before* any real
+adapter, because they shape adapter behavior — otherwise each provider invents
+its own retry/safety semantics.
+
+1. **Provider error taxonomy** — define `ProviderError` classes (timeout, rate
+   limit, refusal, malformed output, auth), retry-with-backoff policy, and
+   whether provider failure consumes a repair attempt. Loop currently knows
+   only `BudgetExceeded` and validation failure. Design details under
+   Strategic gaps below.
+2. **Action-time safety contract** — every builder-proposed action (command,
+   diff, install) passes through `SafetyPolicy` at execution time; intake
+   screening stays as a cheap pre-filter. Shapes the builder/auditor role
+   contracts. Design details under Strategic gaps below.
+3. **Real provider adapters** — Claude / Gemini / OpenAI / local, behind the
    existing `ProviderAdapter` interface. Add interface contract tests before
-   any real API is called. Prerequisites, in order: provider error taxonomy
-   (below), action-time safety (below).
-2. **Real token accounting hooks** — consume provider usage metadata where
-   available instead of estimating from the mock adapter.
+   any real API is called. Blocked on 1 and 2.
+4. **Real token accounting hooks** — consume provider usage metadata where
+   available instead of estimating from the mock adapter. Lands naturally with
+   the first real adapter.
 
 ## Strategic gaps (from 2026-07-04 review — bigger than any one module)
 
@@ -80,6 +93,12 @@ capability into `docs/PROJECT_SUMMARY.md`.
   dirty the tree.
 - Consider keeping one SQLite connection per store if connection-per-call
   overhead becomes visible.
+- Residual (accepted for now): `SQLiteMemoryStore.add_or_merge` refreshes from
+  disk *before* the merge decision, but refresh → merge → UPSERT is not one
+  transaction. Two processes merging the *same* item concurrently can still
+  lose one version bump (per-item last-writer-wins). Cross-item wipes — the
+  original P0 — are gone. Fix if multi-process writers become real: do the
+  re-read and UPSERT inside a single `BEGIN IMMEDIATE` transaction.
 
 ## Notes / conventions
 
@@ -97,4 +116,4 @@ capability into `docs/PROJECT_SUMMARY.md`.
 - ~~Unify router cost estimate with the budget ledger's pricing.~~
 - ~~Structured artifact tracking for changed files / results / reports.~~
 - ~~SQLite memory/event backend with migrations, WAL mode, busy timeout, and transactional writes.~~
-- ~~SQLite review fixes: per-item memory UPSERTs, run/project-scoped events, persisted run results, event/memory redaction, and CI `--sqlite-path` smoke.~~
+- ~~SQLite review fixes: per-item memory UPSERTs, run/project-scoped events, persisted run results, event/memory redaction, and CI `--sqlite-path` smoke.~~ Independently re-verified 2026-07-04: both original repro probes now pass (concurrent writers keep both items; two CLI runs yield distinct `run_id`s with per-run events and cost), redaction confirmed on API-key/password shapes, 40/40 tests, CI green.
