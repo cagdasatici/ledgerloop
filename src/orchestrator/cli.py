@@ -131,7 +131,7 @@ def main(
     config = make_config(args)
     if args.sqlite_path:
         memory = SQLiteMemoryStore.load(config.project_id, args.sqlite_path)
-        events = SQLiteEventLog(args.sqlite_path)
+        events = SQLiteEventLog(args.sqlite_path, project_id=config.project_id)
     else:
         memory = MemoryStore.load(config.project_id, args.memory_path)
         events = None

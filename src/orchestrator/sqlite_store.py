@@ -10,11 +10,11 @@ import os
 import sqlite3
 from typing import Any, Dict, List, Optional
 
-from orchestrator.events import EventLog, LoopEvent, utc_now_iso
+from orchestrator.events import EventLog, LoopEvent, redact_text, utc_now_iso
 from orchestrator.memory import Curator, MemoryItem, MemoryStore
 
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 
 def _json_dump(value: Any) -> str:
@@ -87,6 +87,8 @@ class SQLiteMixin:
                 CREATE TABLE IF NOT EXISTS loop_events (
                     sequence INTEGER PRIMARY KEY,
                     event_id TEXT NOT NULL UNIQUE,
+                    project_id TEXT NOT NULL,
+                    run_id TEXT NOT NULL,
                     task_id TEXT NOT NULL,
                     state TEXT NOT NULL,
                     role TEXT NOT NULL,
@@ -103,6 +105,18 @@ class SQLiteMixin:
                 )
                 """
             )
+            self._ensure_column(
+                connection,
+                "loop_events",
+                "project_id",
+                "project_id TEXT NOT NULL DEFAULT 'loop-orchestrator'",
+            )
+            self._ensure_column(
+                connection,
+                "loop_events",
+                "run_id",
+                "run_id TEXT NOT NULL DEFAULT 'run_legacy'",
+            )
             connection.execute(
                 """
                 CREATE INDEX IF NOT EXISTS idx_loop_events_task_sequence
@@ -111,11 +125,48 @@ class SQLiteMixin:
             )
             connection.execute(
                 """
-                INSERT OR IGNORE INTO ledgerloop_schema_migrations (version, applied_at)
-                VALUES (?, ?)
-                """,
-                (SCHEMA_VERSION, utc_now_iso()),
+                CREATE INDEX IF NOT EXISTS idx_loop_events_project_run_sequence
+                ON loop_events (project_id, run_id, sequence)
+                """
             )
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS run_results (
+                    project_id TEXT NOT NULL,
+                    run_id TEXT NOT NULL,
+                    task_id TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    budget_json TEXT NOT NULL,
+                    prompt_hash TEXT NOT NULL,
+                    cacheable_hash TEXT NOT NULL,
+                    message TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    PRIMARY KEY (project_id, run_id)
+                )
+                """
+            )
+            for version in range(1, SCHEMA_VERSION + 1):
+                connection.execute(
+                    """
+                    INSERT OR IGNORE INTO ledgerloop_schema_migrations (version, applied_at)
+                    VALUES (?, ?)
+                    """,
+                    (version, utc_now_iso()),
+                )
+
+    def _ensure_column(
+        self,
+        connection: sqlite3.Connection,
+        table_name: str,
+        column_name: str,
+        column_definition: str,
+    ) -> None:
+        columns = {
+            row["name"]
+            for row in connection.execute("PRAGMA table_info(%s)" % table_name).fetchall()
+        }
+        if column_name not in columns:
+            connection.execute("ALTER TABLE %s ADD COLUMN %s" % (table_name, column_definition))
 
 
 class SQLiteMemoryStore(SQLiteMixin, MemoryStore):
@@ -144,13 +195,15 @@ class SQLiteMemoryStore(SQLiteMixin, MemoryStore):
     def load(cls, project_id: str, path: str) -> "SQLiteMemoryStore":
         return cls(project_id=project_id, sqlite_path=path)
 
+    def add_or_merge(self, incoming: MemoryItem) -> Dict[str, Any]:
+        # Refresh before deciding merge candidates so stale store instances do
+        # not overwrite memories written by another process.
+        self.items = self._load_items()
+        return super().add_or_merge(incoming)
+
     def save(self) -> None:
         with self._connect() as connection:
             connection.execute("BEGIN IMMEDIATE")
-            connection.execute(
-                "DELETE FROM memory_items WHERE project_id = ?",
-                (self.project_id,),
-            )
             connection.executemany(
                 """
                 INSERT INTO memory_items (
@@ -159,6 +212,19 @@ class SQLiteMemoryStore(SQLiteMixin, MemoryStore):
                     content_hash, created_at, updated_at
                 )
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(project_id, id) DO UPDATE SET
+                    type = excluded.type,
+                    scope = excluded.scope,
+                    summary = excluded.summary,
+                    status = excluded.status,
+                    version = excluded.version,
+                    confidence = excluded.confidence,
+                    source_event_ids_json = excluded.source_event_ids_json,
+                    supersedes_json = excluded.supersedes_json,
+                    tags_json = excluded.tags_json,
+                    content_hash = excluded.content_hash,
+                    created_at = excluded.created_at,
+                    updated_at = excluded.updated_at
                 """,
                 [self._item_to_row(item) for item in self.items],
             )
@@ -221,8 +287,13 @@ class SQLiteEventLog(SQLiteMixin, EventLog):
     or `events_for_task()` to inspect persisted history.
     """
 
-    def __init__(self, sqlite_path: str) -> None:
-        EventLog.__init__(self)
+    def __init__(
+        self,
+        sqlite_path: str,
+        project_id: str = "loop-orchestrator",
+        run_id: Optional[str] = None,
+    ) -> None:
+        EventLog.__init__(self, project_id=project_id, run_id=run_id)
         SQLiteMixin.__init__(self, sqlite_path)
 
     def append(
@@ -250,6 +321,8 @@ class SQLiteEventLog(SQLiteMixin, EventLog):
             ).fetchone()[0]
             event = LoopEvent(
                 event_id="evt_%04d" % sequence,
+                project_id=self.project_id,
+                run_id=self.run_id,
                 task_id=task_id,
                 state=state,
                 role=role,
@@ -258,7 +331,7 @@ class SQLiteEventLog(SQLiteMixin, EventLog):
                 repair_attempt=repair_attempt,
                 failure_fingerprint=failure_fingerprint,
                 status=status,
-                message=message,
+                message=redact_text(message),
                 cost=cost,
                 input_refs=input_refs,
                 output_refs=output_refs,
@@ -266,12 +339,12 @@ class SQLiteEventLog(SQLiteMixin, EventLog):
             connection.execute(
                 """
                 INSERT INTO loop_events (
-                    sequence, event_id, task_id, state, role, provider,
+                    sequence, event_id, project_id, run_id, task_id, state, role, provider,
                     iteration, repair_attempt, failure_fingerprint,
                     input_refs_json, output_refs_json, status, cost_json,
                     message, created_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 self._event_to_row(sequence, event),
             )
@@ -280,11 +353,11 @@ class SQLiteEventLog(SQLiteMixin, EventLog):
         return event
 
     def all_events(self, limit: Optional[int] = None) -> List[Dict[str, Any]]:
-        query = "SELECT * FROM loop_events ORDER BY sequence"
-        params: tuple = ()
+        query = "SELECT * FROM loop_events WHERE project_id = ? ORDER BY sequence"
+        params: tuple = (self.project_id,)
         if limit is not None:
-            query = "SELECT * FROM loop_events ORDER BY sequence DESC LIMIT ?"
-            params = (limit,)
+            query = "SELECT * FROM loop_events WHERE project_id = ? ORDER BY sequence DESC LIMIT ?"
+            params = (self.project_id, limit)
         with self._connect() as connection:
             rows = connection.execute(query, params).fetchall()
         events = [self._row_to_event(row).to_dict() for row in rows]
@@ -297,17 +370,89 @@ class SQLiteEventLog(SQLiteMixin, EventLog):
             rows = connection.execute(
                 """
                 SELECT * FROM loop_events
-                WHERE task_id = ?
+                WHERE project_id = ? AND task_id = ?
                 ORDER BY sequence
                 """,
-                (task_id,),
+                (self.project_id, task_id),
             ).fetchall()
         return [self._row_to_event(row).to_dict() for row in rows]
+
+    def events_for_run(self, run_id: str) -> List[Dict[str, Any]]:
+        with self._connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT * FROM loop_events
+                WHERE project_id = ? AND run_id = ?
+                ORDER BY sequence
+                """,
+                (self.project_id, run_id),
+            ).fetchall()
+        return [self._row_to_event(row).to_dict() for row in rows]
+
+    def record_run_result(self, result: Any) -> None:
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            connection.execute(
+                """
+                INSERT INTO run_results (
+                    project_id, run_id, task_id, status, budget_json,
+                    prompt_hash, cacheable_hash, message, created_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(project_id, run_id) DO UPDATE SET
+                    task_id = excluded.task_id,
+                    status = excluded.status,
+                    budget_json = excluded.budget_json,
+                    prompt_hash = excluded.prompt_hash,
+                    cacheable_hash = excluded.cacheable_hash,
+                    message = excluded.message,
+                    created_at = excluded.created_at
+                """,
+                (
+                    result.project_id,
+                    result.run_id,
+                    result.task_id,
+                    result.status,
+                    _json_dump(result.budget),
+                    result.prompt_hash,
+                    result.cacheable_hash,
+                    redact_text(result.message),
+                    utc_now_iso(),
+                ),
+            )
+            connection.commit()
+
+    def run_results(self) -> List[Dict[str, Any]]:
+        with self._connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT * FROM run_results
+                WHERE project_id = ?
+                ORDER BY created_at, run_id
+                """,
+                (self.project_id,),
+            ).fetchall()
+        return [
+            {
+                "project_id": row["project_id"],
+                "run_id": row["run_id"],
+                "task_id": row["task_id"],
+                "status": row["status"],
+                "budget": _json_load(row["budget_json"], {}),
+                "prompt_hash": row["prompt_hash"],
+                "cacheable_hash": row["cacheable_hash"],
+                "message": row["message"],
+                "created_at": row["created_at"],
+            }
+            for row in rows
+        ]
 
     def _event_to_row(self, sequence: int, event: LoopEvent) -> tuple:
         return (
             sequence,
             event.event_id,
+            event.project_id,
+            event.run_id,
             event.task_id,
             event.state,
             event.role,
@@ -326,6 +471,8 @@ class SQLiteEventLog(SQLiteMixin, EventLog):
     def _row_to_event(self, row: sqlite3.Row) -> LoopEvent:
         return LoopEvent(
             event_id=row["event_id"],
+            project_id=row["project_id"],
+            run_id=row["run_id"],
             task_id=row["task_id"],
             state=row["state"],
             role=row["role"],

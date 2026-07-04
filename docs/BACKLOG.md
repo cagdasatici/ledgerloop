@@ -5,54 +5,13 @@ _Last updated: 2026-07-04_
 Outstanding work only. When an item ships, remove it from this file and move the
 capability into `docs/PROJECT_SUMMARY.md`.
 
-## Review findings — SQLite backend (2026-07-04)
-
-Code review of commit `6c0718b` (Add SQLite persistence backend). Verdict:
-clean implementation and honest scoping (`to_list()` per-run semantics are
-documented; JSON stays the default; tests cover persistence, merge-on-reload,
-and the CLI path; CI green). Four findings, all verified empirically, ordered
-by severity:
-
-1. **[P0] Multi-writer memory loss (last-writer-wins).** `SQLiteMemoryStore.save()`
-   is DELETE-all + re-INSERT of the in-memory snapshot. Two store instances on
-   the same DB: A writes `mem_a`, then B (loaded before A's write) writes
-   `mem_b` — reload shows only `mem_b`. **Reproduced.** The module docstring's
-   "multiple local processes can coordinate more safely" holds for events but
-   is wrong for memory. Fix: per-item UPSERT inside the transaction (and
-   re-read or merge before write), or explicitly document single-writer-only
-   and drop the multi-process claim.
-2. **[P1] No run identity — event history conflates runs.** `loop_events` has no
-   `run_id` and the CLI defaults `--task-id` to `task_cli_0001`, so two
-   consecutive runs produce one undifferentiated 20-event stream under a single
-   task id. **Reproduced.** The spec calls the event log "the source of truth
-   for cost accounting" — without a run boundary, per-run cost/audit
-   reconstruction from the DB is impossible. Fix: generate a unique `run_id`
-   per `LoopRunner.run()` (uuid or timestamp id), add the column + index, and
-   persist a `run_results` row (status, cost summary, hashes) at report time.
-3. **[P1] `loop_events` has no `project_id`.** `memory_items` is project-scoped;
-   events are not. One shared DB across projects conflates their audit trails.
-   Add the column while the schema is young (schema v2 exercises the migration
-   path, which is currently scaffolding that has never run a real migration).
-4. **[P2] Durable persistence makes secret redaction urgent.** Events (including
-   full builder output in `message`) now land on disk verbatim. The redaction
-   item below should be sequenced *before* real provider adapters, not after —
-   real responses may echo API keys, env vars, or file contents.
-
-Minor (no action forced): `_connect()` runs `os.makedirs` + 3 PRAGMAs per
-operation (connection-per-call is fine locally, wasteful later — consider one
-connection per store); the CI smoke run doesn't exercise `--sqlite-path`;
-`evt_%04d` padding widens past 9999 (cosmetic, no collision).
-
 ## Next up (highest value)
 
-1. **Fix review findings 1–3 above** — UPSERT memory writes, run identity +
-   persisted run results, project-scoped events. Small, and they harden the
-   pillar SQLite was built for.
-2. **Real provider adapters** — Claude / Gemini / OpenAI / local, behind the
+1. **Real provider adapters** — Claude / Gemini / OpenAI / local, behind the
    existing `ProviderAdapter` interface. Add interface contract tests before
-   any real API is called. Prerequisites, in order: secret redaction (finding 4),
-   provider error taxonomy (below), action-time safety (below).
-3. **Real token accounting hooks** — consume provider usage metadata where
+   any real API is called. Prerequisites, in order: provider error taxonomy
+   (below), action-time safety (below).
+2. **Real token accounting hooks** — consume provider usage metadata where
    available instead of estimating from the mock adapter.
 
 ## Strategic gaps (from 2026-07-04 review — bigger than any one module)
@@ -79,8 +38,6 @@ connection per store); the CI smoke run doesn't exercise `--sqlite-path`;
 
 ## Core architecture
 
-## Core architecture
-
 - Cache telemetry fields: cache read/write tokens, prefix hashes, provider cache
   status — measured from provider metadata, not promised as a fixed percentage.
 - Persist artifacts across runs (currently in-memory per run) and link them from
@@ -93,8 +50,9 @@ connection per store); the CI smoke run doesn't exercise `--sqlite-path`;
   just block — today high-risk routing always blocks with "Approval required").
 - Command/tool execution sandbox abstraction.
 - Branch isolation policy for code-writing loops.
-- Secret redaction before memory/event persistence — **priority raised** by the
-  SQLite backend (see review finding 4): sequence before real adapters.
+- Broader secret redaction before artifact persistence and tool execution
+  transcripts. Memory summaries and event messages are already redacted before
+  durable persistence.
 
 ## Memory intelligence
 
@@ -120,7 +78,8 @@ connection per store); the CI smoke run doesn't exercise `--sqlite-path`;
 - Decide whether `data/memory/project_store.json` should stay tracked in git —
   it is runtime data; a successful `add_or_merge` during any local run will
   dirty the tree.
-- Add `--sqlite-path` to the CI smoke run.
+- Consider keeping one SQLite connection per store if connection-per-call
+  overhead becomes visible.
 
 ## Notes / conventions
 
@@ -138,3 +97,4 @@ connection per store); the CI smoke run doesn't exercise `--sqlite-path`;
 - ~~Unify router cost estimate with the budget ledger's pricing.~~
 - ~~Structured artifact tracking for changed files / results / reports.~~
 - ~~SQLite memory/event backend with migrations, WAL mode, busy timeout, and transactional writes.~~
+- ~~SQLite review fixes: per-item memory UPSERTs, run/project-scoped events, persisted run results, event/memory redaction, and CI `--sqlite-path` smoke.~~

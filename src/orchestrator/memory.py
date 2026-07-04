@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 from difflib import SequenceMatcher
 from typing import Any, Callable, Dict, Iterable, List, Optional, Set
 
-from orchestrator.events import utc_now_iso
+from orchestrator.events import redact_text, utc_now_iso
 from orchestrator.prompts import sha256_text
 
 
@@ -53,7 +53,9 @@ class MemoryItem:
     content_hash: str = ""
 
     def __post_init__(self) -> None:
-        if not self.content_hash:
+        original_summary = self.summary
+        self.summary = redact_text(self.summary)
+        if not self.content_hash or self.summary != original_summary:
             self.content_hash = sha256_text(self.summary)
 
     def to_dict(self) -> Dict[str, Any]:

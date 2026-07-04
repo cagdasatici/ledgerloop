@@ -1,6 +1,7 @@
 import io
 import json
 import pathlib
+import sqlite3
 import sys
 import tempfile
 import unittest
@@ -46,6 +47,57 @@ class SQLiteStoreTests(unittest.TestCase):
         self.assertEqual(reloaded.items[0].source_event_ids, ["evt_1", "evt_2"])
         self.assertIn("mem_2", reloaded.items[0].supersedes)
 
+    def test_stale_memory_writers_do_not_delete_each_other(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = str(pathlib.Path(tmpdir) / "ledgerloop.db")
+            first_writer = SQLiteMemoryStore.load("loop-orchestrator", db_path)
+            second_writer = SQLiteMemoryStore.load("loop-orchestrator", db_path)
+
+            first_writer.add_or_merge(
+                MemoryItem(
+                    id="mem_a",
+                    project_id="loop-orchestrator",
+                    type="lesson",
+                    scope="src/a.py",
+                    summary="First writer memory should survive.",
+                    tags=["a"],
+                )
+            )
+            second_writer.add_or_merge(
+                MemoryItem(
+                    id="mem_b",
+                    project_id="loop-orchestrator",
+                    type="lesson",
+                    scope="src/b.py",
+                    summary="Second writer memory should not wipe the first.",
+                    tags=["b"],
+                )
+            )
+
+            reloaded = SQLiteMemoryStore.load("loop-orchestrator", db_path)
+
+        self.assertEqual({item.id for item in reloaded.items}, {"mem_a", "mem_b"})
+
+    def test_memory_summary_is_redacted_before_persistence(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = str(pathlib.Path(tmpdir) / "ledgerloop.db")
+            store = SQLiteMemoryStore.load("loop-orchestrator", db_path)
+            store.add_or_merge(
+                MemoryItem(
+                    id="mem_secret",
+                    project_id="loop-orchestrator",
+                    type="lesson",
+                    scope="global",
+                    summary="Never persist api_key=sk-12345678901234567890 in memory.",
+                    tags=["security"],
+                )
+            )
+
+            reloaded = SQLiteMemoryStore.load("loop-orchestrator", db_path)
+
+        self.assertIn("api_key=[REDACTED]", reloaded.items[0].summary)
+        self.assertNotIn("sk-12345678901234567890", reloaded.items[0].summary)
+
     def test_event_log_persists_history_but_keeps_current_run_scoped(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             db_path = str(pathlib.Path(tmpdir) / "ledgerloop.db")
@@ -63,6 +115,81 @@ class SQLiteStoreTests(unittest.TestCase):
         self.assertEqual([event["task_id"] for event in all_events], ["task_1", "task_2"])
         self.assertEqual(len(task_1_events), 1)
         self.assertEqual(task_1_events[0]["message"], "first")
+
+    def test_v1_event_schema_migrates_project_and_run_columns(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = str(pathlib.Path(tmpdir) / "ledgerloop.db")
+            connection = sqlite3.connect(db_path)
+            connection.execute(
+                """
+                CREATE TABLE loop_events (
+                    sequence INTEGER PRIMARY KEY,
+                    event_id TEXT NOT NULL UNIQUE,
+                    task_id TEXT NOT NULL,
+                    state TEXT NOT NULL,
+                    role TEXT NOT NULL,
+                    provider TEXT NOT NULL,
+                    iteration INTEGER NOT NULL,
+                    repair_attempt INTEGER NOT NULL,
+                    failure_fingerprint TEXT,
+                    input_refs_json TEXT NOT NULL,
+                    output_refs_json TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    cost_json TEXT NOT NULL,
+                    message TEXT NOT NULL,
+                    created_at TEXT NOT NULL
+                )
+                """
+            )
+            connection.execute(
+                """
+                INSERT INTO loop_events VALUES (
+                    1, 'evt_0001', 'task_legacy', 'intake', 'router', 'local',
+                    0, 0, NULL, '[]', '[]', 'succeeded', '{}', 'legacy',
+                    '2026-07-04T00:00:00Z'
+                )
+                """
+            )
+            connection.commit()
+            connection.close()
+
+            events = SQLiteEventLog(db_path).all_events()
+
+        self.assertEqual(events[0]["project_id"], "loop-orchestrator")
+        self.assertEqual(events[0]["run_id"], "run_legacy")
+        self.assertEqual(events[0]["task_id"], "task_legacy")
+
+    def test_event_history_is_project_scoped(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = str(pathlib.Path(tmpdir) / "ledgerloop.db")
+            project_a = SQLiteEventLog(db_path, project_id="project-a")
+            project_b = SQLiteEventLog(db_path, project_id="project-b")
+            project_a.append("task_shared", "intake", "router", message="a")
+            project_b.append("task_shared", "intake", "router", message="b")
+
+            a_events = project_a.all_events()
+            b_events = project_b.all_events()
+
+        self.assertEqual([event["project_id"] for event in a_events], ["project-a"])
+        self.assertEqual([event["project_id"] for event in b_events], ["project-b"])
+        self.assertEqual(a_events[0]["message"], "a")
+        self.assertEqual(b_events[0]["message"], "b")
+
+    def test_event_message_is_redacted_before_persistence(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = str(pathlib.Path(tmpdir) / "ledgerloop.db")
+            event_log = SQLiteEventLog(db_path)
+            event_log.append(
+                "task_secret",
+                "execute",
+                "builder",
+                message="Builder echoed api_key=sk-12345678901234567890",
+            )
+
+            persisted = SQLiteEventLog(db_path).all_events()
+
+        self.assertIn("api_key=[REDACTED]", persisted[0]["message"])
+        self.assertNotIn("sk-12345678901234567890", persisted[0]["message"])
 
     def test_cli_uses_sqlite_backend_for_events(self):
         stdout = io.StringIO()
@@ -86,6 +213,32 @@ class SQLiteStoreTests(unittest.TestCase):
         self.assertEqual(payload["status"], "succeeded")
         self.assertEqual(len(persisted_events), len(payload["events"]))
         self.assertEqual(persisted_events[-1]["state"], "report")
+
+    def test_cli_repeated_default_task_id_gets_distinct_run_ids(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = str(pathlib.Path(tmpdir) / "ledgerloop.db")
+            first_stdout = io.StringIO()
+            second_stdout = io.StringIO()
+            main(
+                ["--sqlite-path", db_path, "--json", "explain LedgerLoop architecture"],
+                stdout=first_stdout,
+                stderr=io.StringIO(),
+            )
+            main(
+                ["--sqlite-path", db_path, "--json", "explain LedgerLoop architecture"],
+                stdout=second_stdout,
+                stderr=io.StringIO(),
+            )
+            first_payload = json.loads(first_stdout.getvalue())
+            second_payload = json.loads(second_stdout.getvalue())
+            event_log = SQLiteEventLog(db_path)
+            persisted_events = event_log.all_events()
+            run_results = event_log.run_results()
+
+        self.assertNotEqual(first_payload["run_id"], second_payload["run_id"])
+        self.assertEqual(len({event["run_id"] for event in persisted_events}), 2)
+        self.assertEqual(len(run_results), 2)
+        self.assertEqual({result["task_id"] for result in run_results}, {"task_cli_0001"})
 
 
 if __name__ == "__main__":

@@ -1,6 +1,6 @@
 # LedgerLoop — Project Summary
 
-_Last updated: 2026-07-02_
+_Last updated: 2026-07-04_
 
 LedgerLoop is a mock-first loop orchestrator for multi-agent code-build-audit
 workflows. Core principle: every agent loop must be **bounded, cost-aware,
@@ -12,8 +12,8 @@ providers.
 **Phase 1 complete and hardened.** All ten minimum acceptance criteria from the
 functional spec are met. Published at
 [github.com/cagdasatici/ledgerloop](https://github.com/cagdasatici/ledgerloop)
-(private) with GitHub Actions CI (Python 3.9 / 3.11 / 3.13), green. 34 unit
-tests passing.
+(private) with GitHub Actions CI (Python 3.9 / 3.11 / 3.13). 40 unit tests
+passing locally.
 
 ## Architecture
 
@@ -32,7 +32,7 @@ under `src/orchestrator/`:
 | `safety.py` | Action risk classification + dependency-environment isolation checks, exposed via `evaluate_task`. |
 | `artifacts.py` | Structured artifact registry (builder edits, validation/audit results, report) with content hashes. |
 | `events.py` | Structured, timezone-aware loop event log. |
-| `sqlite_store.py` | SQLite-backed memory and event persistence with schema migration, WAL mode, busy timeout, and transactional writes. |
+| `sqlite_store.py` | SQLite-backed memory and event persistence with schema migrations, WAL mode, busy timeout, transactional memory UPSERTs, project/run-scoped events, and persisted run results. |
 | `cli.py` | CLI for running mock loops (`--config`, `--json`, budget/repair overrides, failure simulation). |
 
 ## What's implemented
@@ -47,7 +47,8 @@ under `src/orchestrator/`:
 - **Closed-loop repair + escalation** — failure fingerprint, message, and attempt counts are fed back into the next prompt; at the repair cap the loop escalates to the next stronger provider tier (ordered by input pricing) and resets the counter, blocking only when no stronger tier remains.
 - **Artifact tracking** — builder edits, validation/audit results, and the final report are recorded with content hashes; events carry `output_refs`; `LoopResult` exposes `artifacts` and `changed_artifacts`.
 - **Config files** — JSON or TOML, layered onto the mock defaults; unknown keys ignored.
-- **SQLite persistence** — opt-in SQLite backend for memories and event logs via `--sqlite-path`; JSON remains the bootstrap default.
+- **SQLite persistence** — opt-in SQLite backend for memories and event logs via `--sqlite-path`; JSON remains the bootstrap default. Memory writes use per-item UPSERTs, durable events are project/run scoped, and final run results are persisted.
+- **Secret redaction** — event messages and memory summaries redact common API key/token/password shapes before durable persistence.
 - **CI** — unit tests + CLI smoke runs on three Python versions.
 
 ## Running it

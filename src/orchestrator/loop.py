@@ -60,6 +60,8 @@ class ValidationResult:
 @dataclass(frozen=True)
 class LoopResult:
     status: str
+    project_id: str
+    run_id: str
     task_id: str
     routing: RoutingDecision
     events: List[Dict[str, object]]
@@ -73,6 +75,8 @@ class LoopResult:
     def to_dict(self) -> Dict[str, object]:
         return {
             "status": self.status,
+            "project_id": self.project_id,
+            "run_id": self.run_id,
             "task_id": self.task_id,
             "routing": self.routing.to_dict(),
             "events": list(self.events),
@@ -112,7 +116,7 @@ class LoopRunner:
             model_id: FakeProviderAdapter(model_id=model_id)
             for model_id in self.config.providers.keys()
         }
-        self.events = events or EventLog()
+        self.events = events or EventLog(project_id=self.config.project_id)
         self.safety = safety or SafetyPolicy(self.config.safety)
         self.budget = BudgetLedger(self.config.budget, self.config.providers)
         self.artifacts = ArtifactStore()
@@ -478,8 +482,10 @@ class LoopRunner:
         cacheable_hash: str,
         message: str,
     ) -> LoopResult:
-        return LoopResult(
+        result = LoopResult(
             status=status,
+            project_id=self.config.project_id,
+            run_id=self.events.run_id,
             task_id=envelope.task_id,
             routing=routing,
             events=self.events.to_list(),
@@ -490,3 +496,7 @@ class LoopRunner:
             artifacts=self.artifacts.to_list(),
             changed_artifacts=self.artifacts.changed(),
         )
+        recorder = getattr(self.events, "record_run_result", None)
+        if recorder:
+            recorder(result)
+        return result

@@ -22,3 +22,4 @@ jobs:
         run: |
           PYTHONPATH=src python -m orchestrator "implement a small budget ledger improvement"
           PYTHONPATH=src python -m orchestrator --json "explain LedgerLoop architecture" > /dev/null
+          PYTHONPATH=src python -m orchestrator --sqlite-path "$RUNNER_TEMP/ledgerloop.db" "explain LedgerLoop SQLite persistence"
