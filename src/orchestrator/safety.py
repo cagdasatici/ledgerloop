@@ -64,6 +64,49 @@ DEPENDENCY_TERMS = (
     "npm",
 )
 
+HIGH_RISK_TERMS = (
+    "push",
+    "deploy",
+    "delete",
+    "rm -rf",
+    "release",
+    "curl ",
+    "wget ",
+    "http://",
+    "https://",
+    "| sh",
+    "| bash",
+    "bash -c",
+    "sh -c",
+    "~/.aws",
+    "~/.ssh",
+    ".env",
+    "credentials",
+    "credential",
+    "secret",
+    "token",
+    "api_key",
+    "api-key",
+)
+
+LOW_RISK_ACTION_TERMS = ("read", "test", "inspect", "format")
+LOW_RISK_COMMAND_PREFIXES = (
+    "cat ",
+    "ls",
+    "pwd",
+    "sed ",
+    "head ",
+    "tail ",
+    "wc ",
+    "rg ",
+    "python3 -m unittest",
+    "python -m unittest",
+    "git status",
+    "git diff",
+    "git log",
+    "git branch",
+)
+
 
 class SafetyPolicy:
     """Classifies actions and blocks unsafe execution."""
@@ -114,6 +157,14 @@ class SafetyPolicy:
                 reason=dependency.reason,
                 action_id=action.action_id,
             )
+        if action.kind.lower() == "command" and risk == "medium":
+            return SafetyDecision(
+                action=action.kind,
+                risk="high",
+                allowed=False,
+                reason="Unrecognized command action requires explicit approval before execution.",
+                action_id=action.action_id,
+            )
         if risk == "high":
             return SafetyDecision(
                 action=action.kind,
@@ -133,17 +184,20 @@ class SafetyPolicy:
     def classify_action(self, action: str, command: str = "") -> str:
         action_l = action.lower()
         command_l = command.lower()
-        if any(
-            term in action_l or term in command_l
-            for term in ["push", "deploy", "delete", "rm -rf", "release"]
-        ):
+        if any(term in action_l or term in command_l for term in HIGH_RISK_TERMS):
             return "high"
         if any(
             term in action_l or term in command_l
             for term in ["install", "dependency", "pip ", "npm ", "poetry"]
         ):
             return "medium"
-        if any(term in action_l for term in ["read", "test", "inspect", "format"]):
+        stripped_command = " ".join(command_l.split())
+        if any(term in action_l for term in LOW_RISK_ACTION_TERMS):
+            return "low"
+        if stripped_command and any(
+            stripped_command == prefix.strip() or stripped_command.startswith(prefix)
+            for prefix in LOW_RISK_COMMAND_PREFIXES
+        ):
             return "low"
         return "medium"
 

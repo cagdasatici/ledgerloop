@@ -231,6 +231,32 @@ class LoopRunnerTests(unittest.TestCase):
         self.assertEqual(gate_events[0]["status"], "blocked")
         self.assertEqual(gate_events[0]["input_refs"], ["act_install"])
 
+    def test_action_time_safety_blocks_unknown_builder_command(self):
+        config = default_config()
+        providers = {
+            model_id: FakeProviderAdapter(model_id=model_id)
+            for model_id in config.providers
+        }
+        providers["balanced-code-model"] = FakeProviderAdapter(
+            model_id="balanced-code-model",
+            actions=[
+                ProposedAction(
+                    action_id="act_custom",
+                    kind="command",
+                    description="Run custom helper",
+                    command="./scripts/do-work",
+                )
+            ],
+        )
+        runner = LoopRunner(config=config, providers=providers, safety=SafetyPolicy(project_root="/tmp/project"))
+
+        result = runner.run("implement custom helper support", task_id="task_unknown_command")
+
+        self.assertEqual(result.status, "blocked")
+        gate_events = [event for event in result.events if event["state"] == "action_safety_gate"]
+        self.assertEqual(gate_events[0]["status"], "blocked")
+        self.assertIn("Unrecognized command action", gate_events[0]["message"])
+
     def test_action_time_safety_allows_low_risk_builder_action(self):
         config = default_config()
         providers = {

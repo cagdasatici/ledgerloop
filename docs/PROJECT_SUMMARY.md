@@ -12,7 +12,7 @@ providers.
 **Phase 1 complete and hardened.** All ten minimum acceptance criteria from the
 functional spec are met. Published at
 [github.com/cagdasatici/ledgerloop](https://github.com/cagdasatici/ledgerloop)
-(private) with GitHub Actions CI (Python 3.9 / 3.11 / 3.13). 51 unit tests
+(private) with GitHub Actions CI (Python 3.9 / 3.11 / 3.13). 56 unit tests
 passing locally.
 
 ## Architecture
@@ -29,7 +29,7 @@ under `src/orchestrator/`:
 | `memory.py` | JSON-backed memory with dedupe, versioning, supersession, scoped retrieval. |
 | `prompts.py` | Five-section deterministic prompt builder with full and cacheable-prefix hashes. |
 | `providers.py` | Provider adapter interface, deterministic `FakeProviderAdapter`, provider error taxonomy, and retry policy. |
-| `safety.py` | Intake risk classification plus execution-time `ProposedAction` gating for commands, diffs, installs, and other builder-proposed actions. |
+| `safety.py` | Intake risk classification plus execution-time `ProposedAction` gating for commands, diffs, installs, and other builder-proposed actions. Command actions are default-deny unless positively classified as low risk. |
 | `artifacts.py` | Structured artifact registry (builder edits, validation/audit results, report) with content hashes. |
 | `events.py` | Structured, timezone-aware loop event log. |
 | `sqlite_store.py` | SQLite-backed memory and event persistence with schema migrations, WAL mode, busy timeout, transactional memory UPSERTs, project/run-scoped events, and persisted run results. |
@@ -47,6 +47,7 @@ under `src/orchestrator/`:
 - **Closed-loop repair + escalation** — failure fingerprint, message, and attempt counts are fed back into the next prompt; at the repair cap the loop escalates to the next stronger provider tier (ordered by input pricing) and resets the counter, blocking only when no stronger tier remains.
 - **Provider error taxonomy** — timeout, rate-limit, auth, refusal, and malformed-output failures define retryability and whether they consume a repair attempt. Retry policy records structured retry events without sleeping inside the core loop.
 - **Action-time safety** — builder-proposed actions are represented as `ProposedAction` records and pass through `SafetyPolicy.evaluate_action()` before the loop accepts them as executed.
+- **Command safety hardening** — network execution, credential access, deploy/push/delete, dependency changes, and unknown command strings are blocked pending approval; only explicit low-risk command prefixes are allowed automatically.
 - **Artifact tracking** — builder edits, validation/audit results, and the final report are recorded with content hashes; events carry `output_refs`; `LoopResult` exposes `artifacts` and `changed_artifacts`.
 - **Config files** — JSON or TOML, layered onto the mock defaults; unknown keys ignored.
 - **SQLite persistence** — opt-in SQLite backend for memories and event logs via `--sqlite-path`; JSON remains the bootstrap default. Memory writes use per-item UPSERTs, durable events are project/run scoped, and final run results are persisted.
