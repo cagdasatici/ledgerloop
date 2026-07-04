@@ -39,14 +39,11 @@ merge. Three findings:
 
 ## Next up (highest value)
 
-1. **Harden the action classifier** (finding 1) — default-deny unrecognized
-   commands, add network/credential vocabulary; small change, closes the gap
-   between the gate contract and the spec's risk table.
-2. **Real provider adapters** — Claude / Gemini / OpenAI / local, behind the
+1. **Real provider adapters** — Claude / Gemini / OpenAI / local, behind the
    existing `ProviderAdapter` interface. Add interface contract tests before
    any real API is called. Fold in findings 2 (who sleeps) and 3 (per-attempt
    usage) during implementation.
-3. **Real token accounting hooks** — consume provider usage metadata where
+2. **Real token accounting hooks** — consume provider usage metadata where
    available instead of estimating from the mock adapter. Lands naturally with
    the first real adapter; must record usage per attempt, not per success
    (finding 3).
@@ -128,3 +125,4 @@ merge. Three findings:
 - ~~SQLite review fixes: per-item memory UPSERTs, run/project-scoped events, persisted run results, event/memory redaction, and CI `--sqlite-path` smoke.~~ Independently re-verified 2026-07-04: both original repro probes now pass (concurrent writers keep both items; two CLI runs yield distinct `run_id`s with per-run events and cost), redaction confirmed on API-key/password shapes, 40/40 tests, CI green.
 - ~~Provider error taxonomy with retry policy and explicit repair-consumption semantics.~~ Reviewed 2026-07-04: semantics verified per class (retry-in-iteration / consume-repair-and-escalate / hard-block); findings 2–3 above carried forward.
 - ~~Action-time safety contract for builder-proposed actions.~~ Reviewed 2026-07-04: gate plumbing correct and evented; classifier vocabulary gap recorded as finding 1 above.
+- ~~Action classifier hardening: command actions default-deny unless explicitly low-risk; network execution and credential access are high-risk.~~
