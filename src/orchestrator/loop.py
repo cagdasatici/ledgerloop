@@ -9,9 +9,9 @@ from orchestrator.config import OrchestratorConfig, default_config
 from orchestrator.events import EventLog, utc_now_iso
 from orchestrator.memory import MemoryStore
 from orchestrator.prompts import PromptBundle, assemble_prompt_bundle, stable_memory_summary
-from orchestrator.providers import FakeProviderAdapter, ProviderAdapter
+from orchestrator.providers import FakeProviderAdapter, ProviderAdapter, ProviderError, RetryPolicy
 from orchestrator.router import Router, RoutingDecision
-from orchestrator.safety import SafetyPolicy
+from orchestrator.safety import ActionSafetyBlocked, ProposedAction, SafetyPolicy
 
 
 @dataclass(frozen=True)
@@ -103,6 +103,7 @@ class LoopRunner:
         providers: Optional[Dict[str, ProviderAdapter]] = None,
         events: Optional[EventLog] = None,
         safety: Optional[SafetyPolicy] = None,
+        retry_policy: Optional[RetryPolicy] = None,
     ) -> None:
         self.config = config or default_config()
         self.router = router or Router(
@@ -118,6 +119,7 @@ class LoopRunner:
         }
         self.events = events or EventLog(project_id=self.config.project_id)
         self.safety = safety or SafetyPolicy(self.config.safety)
+        self.retry_policy = retry_policy or RetryPolicy()
         self.budget = BudgetLedger(self.config.budget, self.config.providers)
         self.artifacts = ArtifactStore()
 
@@ -207,6 +209,60 @@ class LoopRunner:
             except BudgetExceeded as exc:
                 final_status = "blocked"
                 last_message = str(exc)
+                self.events.append(
+                    task_id,
+                    "report",
+                    "reporter",
+                    iteration=iteration,
+                    status=final_status,
+                    message=last_message,
+                )
+                return self._result(
+                    final_status,
+                    envelope,
+                    routing,
+                    prompt_bundle.full_hash,
+                    prompt_bundle.cacheable_hash,
+                    last_message,
+                )
+            except ActionSafetyBlocked as exc:
+                final_status = "blocked"
+                last_message = exc.decision.reason
+                self.events.append(
+                    task_id,
+                    "report",
+                    "reporter",
+                    iteration=iteration,
+                    status=final_status,
+                    message=last_message,
+                )
+                return self._result(
+                    final_status,
+                    envelope,
+                    routing,
+                    prompt_bundle.full_hash,
+                    prompt_bundle.cacheable_hash,
+                    last_message,
+                )
+            except ProviderError as exc:
+                if exc.consumes_repair_attempt:
+                    last_failure = ValidationResult.failure(
+                        exc.failure_fingerprint,
+                        "Provider %s failure from %s: %s"
+                        % (exc.kind, provider.model_id, exc.message),
+                    )
+                    final_status, last_message, provider = self._handle_repair(
+                        task_id, last_failure, repair_attempts, iteration, provider
+                    )
+                    if final_status == "repairing":
+                        continue
+                    break
+
+                final_status = "blocked"
+                last_message = (
+                    "Provider %s failure from %s: %s"
+                    % (exc.kind, provider.model_id, exc.message)
+                )
                 self.events.append(
                     task_id,
                     "report",
@@ -326,13 +382,29 @@ class LoopRunner:
     ) -> str:
         estimate = provider.estimate_usage(prompt)
         estimated_usd = self.budget.assert_can_spend(provider.model_id, estimate, "execute")
-        response = provider.complete(prompt, role="builder", metadata={"task_id": task_id})
+        response = self._complete_provider_with_retry(
+            provider=provider,
+            prompt=prompt,
+            task_id=task_id,
+            iteration=iteration,
+        )
         record = self.budget.record_actual(
             provider.model_id,
             response.usage,
             reason="execute",
             estimated_usd=estimated_usd,
         )
+        self.events.append(
+            task_id,
+            "provider_call",
+            "builder",
+            provider=provider.model_id,
+            iteration=iteration,
+            status="succeeded",
+            cost={"estimated_usd": record.estimated_usd, "actual_usd": record.actual_usd},
+            message="Provider response received.",
+        )
+        self._gate_proposed_actions(task_id, response.actions, iteration)
         artifact = self.artifacts.add(
             task_id,
             "edit",
@@ -347,11 +419,73 @@ class LoopRunner:
             provider=provider.model_id,
             iteration=iteration,
             status="succeeded",
-            cost={"estimated_usd": record.estimated_usd, "actual_usd": record.actual_usd},
             message=response.text,
             output_refs=[artifact.artifact_id],
         )
         return response.text
+
+    def _complete_provider_with_retry(
+        self,
+        provider: ProviderAdapter,
+        prompt: str,
+        task_id: str,
+        iteration: int,
+    ):
+        attempt = 1
+        while True:
+            try:
+                return provider.complete(prompt, role="builder", metadata={"task_id": task_id})
+            except ProviderError as exc:
+                if not exc.provider_model:
+                    exc.provider_model = provider.model_id
+                self.events.append(
+                    task_id,
+                    "provider_error",
+                    "builder",
+                    provider=provider.model_id,
+                    iteration=iteration,
+                    status=exc.kind,
+                    message=exc.message,
+                    failure_fingerprint=exc.failure_fingerprint,
+                )
+                if self.retry_policy.can_retry(exc, attempt):
+                    delay = self.retry_policy.delay_for(exc, attempt)
+                    self.events.append(
+                        task_id,
+                        "provider_retry",
+                        "builder",
+                        provider=provider.model_id,
+                        iteration=iteration,
+                        status="scheduled",
+                        message=(
+                            "Retrying provider %s after %.2fs due to %s."
+                            % (provider.model_id, delay, exc.kind)
+                        ),
+                        failure_fingerprint=exc.failure_fingerprint,
+                    )
+                    attempt += 1
+                    continue
+                raise
+
+    def _gate_proposed_actions(
+        self,
+        task_id: str,
+        actions: List[ProposedAction],
+        iteration: int,
+    ) -> None:
+        for action in actions:
+            decision = self.safety.evaluate_action(action)
+            self.events.append(
+                task_id,
+                "action_safety_gate",
+                "safety",
+                iteration=iteration,
+                status="succeeded" if decision.allowed else "blocked",
+                message="%s: %s" % (action.action_id, decision.reason),
+                input_refs=[action.action_id],
+            )
+            if not decision.allowed:
+                raise ActionSafetyBlocked(decision)
 
     def _handle_repair(
         self,

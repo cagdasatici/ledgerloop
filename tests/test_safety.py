@@ -4,7 +4,7 @@ import unittest
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / "src"))
 
-from orchestrator.safety import SafetyPolicy, SafetyViolation
+from orchestrator.safety import ProposedAction, SafetyPolicy, SafetyViolation
 
 
 class SafetyPolicyTests(unittest.TestCase):
@@ -45,6 +45,49 @@ class SafetyPolicyTests(unittest.TestCase):
 
         self.assertTrue(decision.allowed)
         self.assertEqual(decision.action, "execute")
+
+    def test_evaluate_action_blocks_dependency_action_without_isolation(self):
+        policy = SafetyPolicy(project_root="/tmp/project")
+        action = ProposedAction(
+            action_id="act_1",
+            kind="command",
+            description="Install requests",
+            command="pip install requests",
+        )
+
+        decision = policy.evaluate_action(action, env={})
+
+        self.assertFalse(decision.allowed)
+        self.assertEqual(decision.action_id, "act_1")
+        self.assertEqual(decision.risk, "high")
+
+    def test_evaluate_action_blocks_high_risk_push(self):
+        policy = SafetyPolicy(project_root="/tmp/project")
+        action = ProposedAction(
+            action_id="act_push",
+            kind="command",
+            description="Push to remote",
+            command="git push origin main",
+        )
+
+        decision = policy.evaluate_action(action, env={})
+
+        self.assertFalse(decision.allowed)
+        self.assertEqual(decision.reason, "High-risk action requires explicit approval before execution.")
+
+    def test_evaluate_action_allows_low_risk_file_read(self):
+        policy = SafetyPolicy(project_root="/tmp/project")
+        action = ProposedAction(
+            action_id="act_read",
+            kind="read",
+            description="Inspect README",
+            command="",
+        )
+
+        decision = policy.evaluate_action(action, env={})
+
+        self.assertTrue(decision.allowed)
+        self.assertEqual(decision.risk, "low")
 
 
 if __name__ == "__main__":

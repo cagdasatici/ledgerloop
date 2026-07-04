@@ -10,6 +10,8 @@ Phase 1 intentionally uses deterministic fake provider adapters. The goal is to 
 - deterministic prompt bundle hashing
 - scoped persistent memory with deduplication
 - safety gate wired into the loop: dependency-changing tasks are rejected unless an approved isolated environment is active
+- action-time safety gate: builder-proposed actions are checked before execution
+- provider error taxonomy with retry/repair semantics before real adapters
 - closed-loop repair: failure fingerprints are fed back into the next prompt, and the loop escalates to a stronger provider tier after the repair cap before blocking
 - structured artifact tracking (builder edits, validation/audit results, final report)
 - event logging for audit and future memory consolidation

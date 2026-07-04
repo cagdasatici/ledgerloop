@@ -7,47 +7,19 @@ capability into `docs/PROJECT_SUMMARY.md`.
 
 ## Next up (highest value)
 
-Order confirmed 2026-07-04: the two design contracts come *before* any real
-adapter, because they shape adapter behavior — otherwise each provider invents
-its own retry/safety semantics.
-
-1. **Provider error taxonomy** — define `ProviderError` classes (timeout, rate
-   limit, refusal, malformed output, auth), retry-with-backoff policy, and
-   whether provider failure consumes a repair attempt. Loop currently knows
-   only `BudgetExceeded` and validation failure. Design details under
-   Strategic gaps below.
-2. **Action-time safety contract** — every builder-proposed action (command,
-   diff, install) passes through `SafetyPolicy` at execution time; intake
-   screening stays as a cheap pre-filter. Shapes the builder/auditor role
-   contracts. Design details under Strategic gaps below.
-3. **Real provider adapters** — Claude / Gemini / OpenAI / local, behind the
+1. **Real provider adapters** — Claude / Gemini / OpenAI / local, behind the
    existing `ProviderAdapter` interface. Add interface contract tests before
-   any real API is called. Blocked on 1 and 2.
-4. **Real token accounting hooks** — consume provider usage metadata where
+   any real API is called.
+2. **Real token accounting hooks** — consume provider usage metadata where
    available instead of estimating from the mock adapter. Lands naturally with
    the first real adapter.
 
 ## Strategic gaps (from 2026-07-04 review — bigger than any one module)
 
-- **Safety must gate actions, not intake text.** `evaluate_task()` classifies
-  the user's goal string by keyword match, once, at intake. That is fine for
-  mocks but structurally insufficient for real providers: the *builder's
-  proposed actions* (commands, diffs, installs) are what carry risk, and they
-  don't exist yet at intake — a task phrased innocently can propose `pip
-  install` or `git push` mid-loop and no gate fires. Design change: every
-  proposed action passes through `SafetyPolicy` at execution time (the
-  spec §231 already says "classify actions by risk before execution"); intake
-  screening stays as a cheap pre-filter. This should shape the
-  builder/auditor role contracts before adapters are written.
 - **Cross-run budgets.** `BudgetLedger` is per-run and in-memory; cost records
   evaporate at process exit. The cost-awareness pillar needs a persisted
   `cost_records` table (SQLite now exists for this) plus daily/weekly/global
   caps checked at intake — otherwise 100 runs × $1 budget = unbounded spend.
-- **Provider error taxonomy.** Adapters have no failure contract: timeouts,
-  429s, refusals, malformed output. The loop currently knows only
-  `BudgetExceeded` and validation failure. Define `ProviderError` classes,
-  retry-with-backoff policy, and whether provider failure consumes a repair
-  attempt — before the first real adapter, or every adapter invents its own.
 
 ## Core architecture
 
@@ -117,3 +89,5 @@ its own retry/safety semantics.
 - ~~Structured artifact tracking for changed files / results / reports.~~
 - ~~SQLite memory/event backend with migrations, WAL mode, busy timeout, and transactional writes.~~
 - ~~SQLite review fixes: per-item memory UPSERTs, run/project-scoped events, persisted run results, event/memory redaction, and CI `--sqlite-path` smoke.~~ Independently re-verified 2026-07-04: both original repro probes now pass (concurrent writers keep both items; two CLI runs yield distinct `run_id`s with per-run events and cost), redaction confirmed on API-key/password shapes, 40/40 tests, CI green.
+- ~~Provider error taxonomy with retry policy and explicit repair-consumption semantics.~~
+- ~~Action-time safety contract for builder-proposed actions.~~

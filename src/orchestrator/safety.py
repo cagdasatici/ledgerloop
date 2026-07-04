@@ -1,7 +1,7 @@
 """Safety policy and environment isolation checks."""
 
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Dict, Optional
 
 from orchestrator.config import SafetyConfig
@@ -17,6 +17,37 @@ class SafetyDecision:
     risk: str
     allowed: bool
     reason: str
+    action_id: str = ""
+
+
+@dataclass(frozen=True)
+class ProposedAction:
+    """Action proposed by a builder before the orchestrator executes it."""
+
+    action_id: str
+    kind: str
+    description: str
+    command: str = ""
+    path: str = ""
+    metadata: Dict[str, str] = field(default_factory=dict)
+
+    def to_dict(self) -> Dict[str, object]:
+        return {
+            "action_id": self.action_id,
+            "kind": self.kind,
+            "description": self.description,
+            "command": self.command,
+            "path": self.path,
+            "metadata": dict(self.metadata),
+        }
+
+
+class ActionSafetyBlocked(SafetyViolation):
+    """Raised when a proposed action is blocked at execution time."""
+
+    def __init__(self, decision: SafetyDecision):
+        super().__init__(decision.reason)
+        self.decision = decision
 
 
 DEPENDENCY_TERMS = (
@@ -65,12 +96,52 @@ class SafetyPolicy:
             "execute", risk, True, "No isolation-sensitive action detected."
         )
 
+    def evaluate_action(
+        self,
+        action: ProposedAction,
+        env: Optional[Dict[str, str]] = None,
+    ) -> SafetyDecision:
+        """Gate a builder-proposed action at execution time."""
+
+        risk = self.classify_action(action.kind + " " + action.description, action.command)
+        text = ("%s %s %s" % (action.kind, action.description, action.command)).lower()
+        if any(term in text for term in DEPENDENCY_TERMS):
+            dependency = self.verify_dependency_environment(env=env)
+            return SafetyDecision(
+                action=action.kind,
+                risk="high" if not dependency.allowed else risk,
+                allowed=dependency.allowed,
+                reason=dependency.reason,
+                action_id=action.action_id,
+            )
+        if risk == "high":
+            return SafetyDecision(
+                action=action.kind,
+                risk=risk,
+                allowed=False,
+                reason="High-risk action requires explicit approval before execution.",
+                action_id=action.action_id,
+            )
+        return SafetyDecision(
+            action=action.kind,
+            risk=risk,
+            allowed=True,
+            reason="Proposed action passed execution-time safety policy.",
+            action_id=action.action_id,
+        )
+
     def classify_action(self, action: str, command: str = "") -> str:
         action_l = action.lower()
         command_l = command.lower()
-        if any(term in action_l or term in command_l for term in ["push", "deploy", "delete"]):
+        if any(
+            term in action_l or term in command_l
+            for term in ["push", "deploy", "delete", "rm -rf", "release"]
+        ):
             return "high"
-        if any(term in action_l or term in command_l for term in ["install", "dependency"]):
+        if any(
+            term in action_l or term in command_l
+            for term in ["install", "dependency", "pip ", "npm ", "poetry"]
+        ):
             return "medium"
         if any(term in action_l for term in ["read", "test", "inspect", "format"]):
             return "low"
