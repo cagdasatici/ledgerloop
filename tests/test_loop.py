@@ -193,7 +193,7 @@ class LoopRunnerTests(unittest.TestCase):
         runner = LoopRunner(
             config=config,
             providers=providers,
-            retry_policy=RetryPolicy(max_attempts=2),
+            retry_policy=RetryPolicy(max_attempts=2, sleeper=lambda _s: None),
         )
 
         result = runner.run("implement retry handling", task_id="task_retry")
@@ -244,7 +244,7 @@ class LoopRunnerTests(unittest.TestCase):
         runner = LoopRunner(
             config=config,
             providers=providers,
-            retry_policy=RetryPolicy(max_attempts=1),
+            retry_policy=RetryPolicy(max_attempts=1, sleeper=lambda _s: None),
         )
 
         result = runner.run("implement malformed output handling", task_id="task_malformed")
@@ -332,6 +332,28 @@ class LoopRunnerTests(unittest.TestCase):
         self.assertEqual(result.status, "succeeded")
         gate_events = [event for event in result.events if event["state"] == "action_safety_gate"]
         self.assertEqual(gate_events[0]["status"], "succeeded")
+
+    def test_failed_attempt_usage_is_recorded(self):
+        config = default_config()
+        providers = {m: FakeProviderAdapter(model_id=m) for m in config.providers}
+        providers["balanced-code-model"] = FakeProviderAdapter(
+            model_id="balanced-code-model",
+            failures=[ProviderTimeoutError("slow", "balanced-code-model")],
+        )
+        providers["balanced-code-model"].failures[0].usage = UsageMetadata(
+            input_tokens=500, output_tokens=0
+        )
+        runner = LoopRunner(
+            config=config,
+            providers=providers,
+            retry_policy=RetryPolicy(max_attempts=2, sleeper=lambda _s: None),
+        )
+
+        result = runner.run("implement retry accounting", task_id="task_attempt_cost")
+
+        self.assertEqual(result.status, "succeeded")
+        reasons = [r.reason for r in runner.budget.records]
+        self.assertIn("failed_attempt", reasons)
 
 
 if __name__ == "__main__":

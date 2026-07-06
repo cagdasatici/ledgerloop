@@ -1,7 +1,8 @@
 """Provider adapter contracts and deterministic fake provider."""
 
+import time
 from dataclasses import dataclass, field
-from typing import Dict, Iterable, List, Optional
+from typing import Callable, Dict, Iterable, List, Optional
 
 from orchestrator.budget import UsageMetadata
 from orchestrator.safety import ProposedAction
@@ -14,6 +15,7 @@ class RetryPolicy:
     max_attempts: int = 2
     base_delay_seconds: float = 1.0
     max_delay_seconds: float = 30.0
+    sleeper: Callable[[float], None] = field(default=time.sleep)
 
     def can_retry(self, error: "ProviderError", attempt: int) -> bool:
         return error.retryable and attempt < self.max_attempts
@@ -23,6 +25,11 @@ class RetryPolicy:
             return min(error.retry_after_seconds, self.max_delay_seconds)
         delay = self.base_delay_seconds * (2 ** max(0, attempt - 1))
         return min(delay, self.max_delay_seconds)
+
+    def wait(self, error: "ProviderError", attempt: int) -> float:
+        delay = self.delay_for(error, attempt)
+        self.sleeper(delay)
+        return delay
 
 
 class ProviderError(RuntimeError):
@@ -37,11 +44,13 @@ class ProviderError(RuntimeError):
         message: str,
         provider_model: str = "",
         retry_after_seconds: Optional[float] = None,
+        usage: Optional[UsageMetadata] = None,
     ) -> None:
         super().__init__(message)
         self.message = message
         self.provider_model = provider_model
         self.retry_after_seconds = retry_after_seconds
+        self.usage = usage
 
     @property
     def failure_fingerprint(self) -> str:

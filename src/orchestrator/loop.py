@@ -527,6 +527,22 @@ class LoopRunner:
             except ProviderError as exc:
                 if not exc.provider_model:
                     exc.provider_model = provider.model_id
+                if exc.usage is not None:
+                    record = self.budget.record_actual(
+                        provider.model_id,
+                        exc.usage,
+                        reason="failed_attempt",
+                    )
+                    recorder = getattr(self.events, "record_cost", None)
+                    if recorder:
+                        recorder(
+                            task_id,
+                            provider.model_id,
+                            "failed_attempt",
+                            exc.usage,
+                            record.estimated_usd,
+                            record.actual_usd,
+                        )
                 self.events.append(
                     task_id,
                     "provider_error",
@@ -538,7 +554,7 @@ class LoopRunner:
                     failure_fingerprint=exc.failure_fingerprint,
                 )
                 if self.retry_policy.can_retry(exc, attempt):
-                    delay = self.retry_policy.delay_for(exc, attempt)
+                    delay = self.retry_policy.wait(exc, attempt)
                     self.events.append(
                         task_id,
                         "provider_retry",

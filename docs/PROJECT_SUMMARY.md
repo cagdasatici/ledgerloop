@@ -12,7 +12,7 @@ providers.
 **Phase 1 complete and hardened.** All ten minimum acceptance criteria from the
 functional spec are met. Published at
 [github.com/cagdasatici/ledgerloop](https://github.com/cagdasatici/ledgerloop)
-(private) with GitHub Actions CI (Python 3.9 / 3.11 / 3.13). 70 unit tests
+(private) with GitHub Actions CI (Python 3.9 / 3.11 / 3.13). 71 unit tests
 passing locally.
 
 ## Architecture
@@ -49,6 +49,7 @@ under `src/orchestrator/`:
 - **Safety gate wired into the loop** — dependency-changing tasks are rejected unless an approved isolated environment (project-local venv / configured container) is active; a `safety_gate` event is always emitted.
 - **Closed-loop repair + escalation** — failure fingerprint, message, and attempt counts are fed back into the next prompt; at the repair cap the loop escalates to the next stronger provider tier (ordered by input pricing) and resets the counter, blocking only when no stronger tier remains.
 - **Provider error taxonomy** — timeout, rate-limit, auth, refusal, and malformed-output failures define retryability and whether they consume a repair attempt. Retry policy records structured retry events without sleeping inside the core loop.
+- **Retry/backoff execution hook** — retries now pass through an injectable sleeper, so real adapters can honor backoff while tests remain instant; failed attempts also record usage into the budget ledger.
 - **Action-time safety** — builder-proposed actions are represented as `ProposedAction` records and pass through `SafetyPolicy.evaluate_action()` before the loop accepts them as executed.
 - **Command safety hardening** — network execution, credential access, deploy/push/delete, dependency changes, and unknown command strings are blocked pending approval; only explicit low-risk command prefixes are allowed automatically.
 - **Safety classifier precision fixes** — dependency-change detection now uses word boundaries, low-risk prefix matching no longer misclassifies `lsof` via `ls`, and token/secret mentions only block when they look like access shapes rather than normal engineering text.
