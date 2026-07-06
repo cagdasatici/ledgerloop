@@ -9,3 +9,4 @@ venv/
 dist/
 build/
 *.egg-info/
+data/memory/project_store.json

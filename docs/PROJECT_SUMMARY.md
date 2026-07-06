@@ -12,8 +12,8 @@ providers.
 **Phase 1 complete and hardened.** All ten minimum acceptance criteria from the
 functional spec are met. Published at
 [github.com/cagdasatici/ledgerloop](https://github.com/cagdasatici/ledgerloop)
-(private) with GitHub Actions CI (Python 3.9 / 3.11 / 3.13). 73 unit tests
-passing locally.
+(private) with GitHub Actions CI (Python 3.9 / 3.11 / 3.13). Current version:
+`0.2.0`. 73 unit tests passing locally.
 
 ## Architecture
 
@@ -57,6 +57,7 @@ under `src/orchestrator/`:
 - **Artifact tracking** — builder edits, validation/audit results, and the final report are recorded with content hashes; events carry `output_refs`; `LoopResult` exposes `artifacts` and `changed_artifacts`.
 - **Artifact durability** — SQLite-backed runs now persist artifact metadata alongside events and run results, so `art_` references remain resolvable after the process exits.
 - **Config files** — JSON or TOML, layered onto the mock defaults; unknown keys ignored.
+- **Release housekeeping** — `CHANGELOG.md` is in place for `0.2.0`, and the runtime JSON memory store is ignored rather than tracked in Git.
 - **SQLite persistence** — opt-in SQLite backend for memories and event logs via `--sqlite-path`; JSON remains the bootstrap default. Memory writes use per-item UPSERTs, durable events are project/run scoped, and final run results are persisted.
 - **Secret redaction** — event messages and memory summaries redact common API key/token/password shapes before durable persistence.
 - **CI** — unit tests + CLI smoke runs on three Python versions.
@@ -90,3 +91,4 @@ PYTHONPATH=src python3 -m orchestrator --sqlite-path data/ledgerloop.db "..."
 - `docs/spec-audit.md` — audit of the original concept spec.
 - `docs/loop-orchestrator-functional-spec.md` — tightened functional spec + acceptance criteria.
 - `docs/BACKLOG.md` — outstanding work, pruned as items ship.
+- `CHANGELOG.md` — versioned project changes through `0.2.0`.

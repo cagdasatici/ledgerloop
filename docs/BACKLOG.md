@@ -13,18 +13,8 @@ and unknown commands now all block; the allowlist admits `git diff` etc.
 Overall verdict: Phase 1 is a coherent, honest mock-first framework — bounded
 loop, unified cost math, per-phase event audit trail, durable run identity,
 and a default-deny action gate. Remaining findings are precision issues and
-the known strategic gaps, all of which are specified as concrete work items
-in `docs/IMPLEMENTATION_GUIDE.md`.
-
-## Next up
-
-**Execute `docs/IMPLEMENTATION_GUIDE.md`, work item WI-8, in
-order, one commit each.** The guide contains exact file changes, test names,
-assertions, and commit messages. Summary of what it covers:
-
-| WI | What |
-|----|------|
-| 8 | Housekeeping: CHANGELOG, version 0.2.0, untrack runtime memory JSON |
+the known strategic gaps. `docs/IMPLEMENTATION_GUIDE.md` WI-1 through WI-8
+are now fully shipped.
 
 ## After the guide (not yet specified in detail)
 
@@ -79,3 +69,4 @@ assertions, and commit messages. Summary of what it covers:
 - ~~Retry sleeper hook and failed-attempt usage recording.~~ Shipped 2026-07-06; retries now call an injectable sleeper and bill failed attempts into the same budget ledger and SQLite cost records as successful calls.
 - ~~Artifact persistence to SQLite.~~ Shipped 2026-07-06; run artifacts now survive process exit and every persisted `art_` output reference resolves in the SQLite `artifacts` table.
 - ~~Failure lessons on repair-blocked runs.~~ Shipped 2026-07-06; blocked repair loops now consolidate a deduping lesson into persistent memory instead of ending with a no-op memory phase.
+- ~~Housekeeping: changelog, version bump, untrack runtime memory store.~~ Shipped 2026-07-06; repo version is now `0.2.0`, `CHANGELOG.md` exists, and `data/memory/project_store.json` is no longer tracked.
