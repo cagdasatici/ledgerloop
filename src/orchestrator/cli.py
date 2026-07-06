@@ -37,6 +37,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--events-out", help="Write event log JSON to this path.")
     parser.add_argument("--max-usd", type=float, help="Override the run budget in USD.")
     parser.add_argument(
+        "--global-budget-usd",
+        type=float,
+        help="Override the cross-run budget cap in USD.",
+    )
+    parser.add_argument(
         "--max-iterations",
         type=int,
         help="Override the maximum loop iterations.",
@@ -64,6 +69,8 @@ def make_config(args: argparse.Namespace) -> OrchestratorConfig:
     overrides = {}
     if args.max_usd is not None:
         overrides["max_usd"] = args.max_usd
+    if args.global_budget_usd is not None:
+        overrides["global_max_usd"] = args.global_budget_usd
     if args.max_iterations is not None:
         overrides["max_iterations"] = args.max_iterations
     if args.max_repair_attempts is not None:

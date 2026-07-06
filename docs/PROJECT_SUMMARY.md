@@ -12,7 +12,7 @@ providers.
 **Phase 1 complete and hardened.** All ten minimum acceptance criteria from the
 functional spec are met. Published at
 [github.com/cagdasatici/ledgerloop](https://github.com/cagdasatici/ledgerloop)
-(private) with GitHub Actions CI (Python 3.9 / 3.11 / 3.13). 68 unit tests
+(private) with GitHub Actions CI (Python 3.9 / 3.11 / 3.13). 70 unit tests
 passing locally.
 
 ## Architecture
@@ -42,6 +42,7 @@ under `src/orchestrator/`:
 - **Capability-aware phase binding** — routing now emits `phase_providers`, and the loop binds plan, build, and audit to the cheapest configured model that meets the routed complexity for that phase.
 - **Structured planning handoff** — the plan phase now performs a real planner-model call, records a `plan` artifact, and injects a `PlanSpec` into the build prompt payload for downstream execution.
 - **Hard budget enforcement** — spend and token breakers; a reserved headroom for the final report (`reserved_final_report_usd`, default 0.02).
+- **Cross-run budget enforcement** — SQLite-backed runs now persist per-call `cost_records`, and the loop can refuse new work at intake once cumulative project spend crosses `global_max_usd`.
 - **Unified cost model** — router pre-flight estimate and ledger enforcement share `ModelPricing.cost_for`, so they cannot diverge.
 - **Deterministic prompts** — stable full and cacheable-prefix hashes; cacheable prefix stays constant across repair iterations.
 - **Scoped memory** — similarity-based retrieval that excludes irrelevant items; repeated lessons are merged, not appended.

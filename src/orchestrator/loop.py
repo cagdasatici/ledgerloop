@@ -139,6 +139,19 @@ class LoopRunner:
         self.events.append(task_id, "intake", "router", message="Task envelope created.")
 
         routing = self.router.route_task(user_goal)
+        if self.config.budget.global_max_usd > 0:
+            spent = getattr(self.events, "total_spend_usd", None)
+            if spent and spent() >= self.config.budget.global_max_usd:
+                self.events.append(
+                    task_id,
+                    "report",
+                    "reporter",
+                    status="blocked",
+                    message="Cross-run budget exhausted.",
+                )
+                return self._result(
+                    "blocked", envelope, routing, "", "", "Cross-run budget exhausted."
+                )
         self.events.append(
             task_id,
             "route",
@@ -194,12 +207,22 @@ class LoopRunner:
             plan_response = plan_provider.complete(
                 prompt_bundle.full_prompt, role="planner", metadata={"task_id": task_id}
             )
-            self.budget.record_actual(
+            plan_record = self.budget.record_actual(
                 plan_provider.model_id,
                 plan_response.usage,
                 reason="plan",
                 estimated_usd=plan_estimated_usd,
             )
+            recorder = getattr(self.events, "record_cost", None)
+            if recorder:
+                recorder(
+                    task_id,
+                    plan_provider.model_id,
+                    "plan",
+                    plan_response.usage,
+                    plan_record.estimated_usd,
+                    plan_record.actual_usd,
+                )
             plan_spec = plan_from_provider_text(
                 user_goal, plan_provider.model_id, plan_response.text
             )
@@ -450,6 +473,16 @@ class LoopRunner:
             reason="execute",
             estimated_usd=estimated_usd,
         )
+        recorder = getattr(self.events, "record_cost", None)
+        if recorder:
+            recorder(
+                task_id,
+                provider.model_id,
+                "execute",
+                response.usage,
+                record.estimated_usd,
+                record.actual_usd,
+            )
         self.events.append(
             task_id,
             "provider_call",

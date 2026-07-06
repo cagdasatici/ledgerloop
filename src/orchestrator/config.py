@@ -58,6 +58,7 @@ class BudgetConfig:
     """Hard run-level limits."""
 
     max_usd: float = 1.0
+    global_max_usd: float = 0.0
     max_input_tokens: int = 200000
     max_output_tokens: int = 50000
     max_repair_attempts: int = 3

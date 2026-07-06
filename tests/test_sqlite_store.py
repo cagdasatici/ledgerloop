@@ -8,6 +8,7 @@ import unittest
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / "src"))
 
+from orchestrator.budget import UsageMetadata
 from orchestrator.cli import main
 from orchestrator.memory import MemoryItem
 from orchestrator.sqlite_store import SQLiteEventLog, SQLiteMemoryStore
@@ -239,6 +240,32 @@ class SQLiteStoreTests(unittest.TestCase):
         self.assertEqual(len({event["run_id"] for event in persisted_events}), 2)
         self.assertEqual(len(run_results), 2)
         self.assertEqual({result["task_id"] for result in run_results}, {"task_cli_0001"})
+
+    def test_cost_records_accumulate_across_runs(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = str(pathlib.Path(tmpdir) / "ledgerloop.db")
+            first_log = SQLiteEventLog(db_path, project_id="loop-orchestrator")
+            second_log = SQLiteEventLog(db_path, project_id="loop-orchestrator")
+            first_log.record_cost(
+                "task_1",
+                "balanced-code-model",
+                "execute",
+                UsageMetadata(input_tokens=10, output_tokens=20),
+                0.1,
+                0.1,
+            )
+            second_log.record_cost(
+                "task_2",
+                "strong-audit-model",
+                "plan",
+                UsageMetadata(input_tokens=30, output_tokens=40),
+                0.2,
+                0.2,
+            )
+
+            total = second_log.total_spend_usd()
+
+        self.assertAlmostEqual(total, 0.3)
 
 
 if __name__ == "__main__":

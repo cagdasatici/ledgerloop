@@ -10,11 +10,12 @@ import os
 import sqlite3
 from typing import Any, Dict, List, Optional
 
+from orchestrator.budget import UsageMetadata
 from orchestrator.events import EventLog, LoopEvent, redact_text, utc_now_iso
 from orchestrator.memory import Curator, MemoryItem, MemoryStore
 
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 
 def _json_dump(value: Any) -> str:
@@ -143,6 +144,31 @@ class SQLiteMixin:
                     created_at TEXT NOT NULL,
                     PRIMARY KEY (project_id, run_id)
                 )
+                """
+            )
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS cost_records (
+                    record_id INTEGER PRIMARY KEY,
+                    project_id TEXT NOT NULL,
+                    run_id TEXT NOT NULL,
+                    task_id TEXT NOT NULL,
+                    provider_model TEXT NOT NULL,
+                    reason TEXT NOT NULL,
+                    input_tokens INTEGER NOT NULL,
+                    output_tokens INTEGER NOT NULL,
+                    cache_read_tokens INTEGER NOT NULL,
+                    cache_write_tokens INTEGER NOT NULL,
+                    estimated_usd REAL NOT NULL,
+                    actual_usd REAL NOT NULL,
+                    created_at TEXT NOT NULL
+                )
+                """
+            )
+            connection.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_cost_records_project_created
+                ON cost_records (project_id, created_at)
                 """
             )
             for version in range(1, SCHEMA_VERSION + 1):
@@ -446,6 +472,55 @@ class SQLiteEventLog(SQLiteMixin, EventLog):
             }
             for row in rows
         ]
+
+    def record_cost(
+        self,
+        task_id: str,
+        provider_model: str,
+        reason: str,
+        usage: UsageMetadata,
+        estimated_usd: float,
+        actual_usd: float,
+    ) -> None:
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            connection.execute(
+                """
+                INSERT INTO cost_records (
+                    project_id, run_id, task_id, provider_model, reason,
+                    input_tokens, output_tokens, cache_read_tokens, cache_write_tokens,
+                    estimated_usd, actual_usd, created_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    self.project_id,
+                    self.run_id,
+                    task_id,
+                    provider_model,
+                    reason,
+                    usage.input_tokens,
+                    usage.output_tokens,
+                    usage.cache_read_tokens,
+                    usage.cache_write_tokens,
+                    estimated_usd,
+                    actual_usd,
+                    utc_now_iso(),
+                ),
+            )
+            connection.commit()
+
+    def total_spend_usd(self) -> float:
+        with self._connect() as connection:
+            row = connection.execute(
+                """
+                SELECT COALESCE(SUM(actual_usd), 0)
+                FROM cost_records
+                WHERE project_id = ?
+                """,
+                (self.project_id,),
+            ).fetchone()
+        return float(row[0] or 0.0)
 
     def _event_to_row(self, sequence: int, event: LoopEvent) -> tuple:
         return (

@@ -7,7 +7,7 @@ capability into `docs/PROJECT_SUMMARY.md`.
 
 ## Final review record — full project (2026-07-06)
 
-Reviewed everything through PR #2 (`395b855`, merged `4f3b4bb`). 68/68 tests,
+Reviewed everything through PR #2 (`395b855`, merged `4f3b4bb`). 70/70 tests,
 CI green. PR #2 verified by re-probe: `curl … | sh`, `cat ~/.aws/credentials`,
 and unknown commands now all block; the allowlist admits `git diff` etc.
 Overall verdict: Phase 1 is a coherent, honest mock-first framework — bounded
@@ -16,18 +16,17 @@ and a default-deny action gate. Remaining findings are precision issues and
 the known strategic gaps, all of which are specified as concrete work items
 in `docs/IMPLEMENTATION_GUIDE.md`:
 - Carried P2s: nobody honors `delay_for` (→ WI-5); failed attempts record
-  zero budget (→ WI-5); cross-run budgets missing (→ WI-4); artifacts not
-  persisted (→ WI-6); lesson-from-failure missing (→ WI-7).
+  zero budget (→ WI-5); artifacts not persisted (→ WI-6);
+  lesson-from-failure missing (→ WI-7).
 
 ## Next up
 
-**Execute `docs/IMPLEMENTATION_GUIDE.md`, work items WI-4 through WI-8, in
+**Execute `docs/IMPLEMENTATION_GUIDE.md`, work items WI-5 through WI-8, in
 order, one commit each.** The guide contains exact file changes, test names,
 assertions, and commit messages. Summary of what it covers:
 
 | WI | What |
 |----|------|
-| 4 | Cross-run budgets: persisted `cost_records` + `global_max_usd` cap at intake |
 | 5 | Retry sleep hook (injectable sleeper) + per-attempt usage recording |
 | 6 | Persist artifacts to SQLite |
 | 7 | Lesson-from-failure memory consolidation on repair-blocked runs |
@@ -82,3 +81,4 @@ assertions, and commit messages. Summary of what it covers:
 - ~~Safety classifier precision: word-boundary dependency terms, `ls` prefix tightening, token/secret access-shape matching.~~ Shipped 2026-07-06; false positives reproduced in review no longer block.
 - ~~Capability matrix and per-phase provider binding.~~ Shipped 2026-07-06; routing now emits `phase_providers` and the loop binds plan/build/audit to the cheapest capable model per phase.
 - ~~Planner output schema and plan-phase provider call.~~ Shipped 2026-07-06; the loop now records a `plan` artifact, budgets the planner call, and hands a `PlanSpec` into the build prompt payload.
+- ~~Persisted cost records and cross-run budget cap.~~ Shipped 2026-07-06; provider-call spend is now durable in SQLite and the loop can block at intake once project-level spend exceeds `global_max_usd`.

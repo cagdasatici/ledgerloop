@@ -1,11 +1,13 @@
 import pathlib
 import sys
+import tempfile
 import unittest
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / "src"))
 
 from orchestrator.config import BudgetConfig, OrchestratorConfig, default_config
 from orchestrator.loop import LoopRunner, ValidationResult
+from orchestrator.budget import UsageMetadata
 from orchestrator.providers import (
     FakeProviderAdapter,
     ProviderAuthError,
@@ -14,6 +16,7 @@ from orchestrator.providers import (
     RetryPolicy,
 )
 from orchestrator.safety import ProposedAction, SafetyPolicy
+from orchestrator.sqlite_store import SQLiteEventLog
 
 
 class LoopRunnerTests(unittest.TestCase):
@@ -150,6 +153,32 @@ class LoopRunnerTests(unittest.TestCase):
         plan_events = [e for e in result.events if e["state"] == "plan"]
         self.assertTrue(plan_events[0]["output_refs"])
         self.assertEqual(result.budget["records"], 2)
+
+    def test_cross_run_budget_blocks_at_intake(self):
+        base = default_config()
+        config = OrchestratorConfig(
+            project_id=base.project_id,
+            budget=BudgetConfig(global_max_usd=0.5),
+            safety=base.safety,
+            providers=base.providers,
+        )
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = str(pathlib.Path(tmpdir) / "ledgerloop.db")
+            events = SQLiteEventLog(db_path, project_id=base.project_id)
+            events.record_cost(
+                "task_prev",
+                "balanced-code-model",
+                "execute",
+                UsageMetadata(input_tokens=10, output_tokens=10),
+                1.0,
+                1.0,
+            )
+            runner = LoopRunner(config=config, events=events)
+
+            result = runner.run("implement a small budget ledger improvement", task_id="task_cap")
+
+        self.assertEqual(result.status, "blocked")
+        self.assertIn("Cross-run budget", result.message)
 
     def test_provider_timeout_retries_before_success(self):
         config = default_config()
