@@ -43,6 +43,9 @@ class ProviderModelConfig:
     provider: str
     model_id: str
     pricing: ModelPricing = field(default_factory=ModelPricing)
+    # Score 0-3 per phase; 0 = do not use, 1 = usable for low-complexity,
+    # 2 = solid for medium, 3 = strong enough for high.
+    capabilities: Dict[str, int] = field(default_factory=dict)
     context_window: int = 128000
     supports_cache: bool = False
     supports_tools: bool = False
@@ -88,12 +91,14 @@ def default_config() -> OrchestratorConfig:
         provider="fake",
         model_id="cheap-fast-model",
         pricing=ModelPricing(input_per_million=0.05, output_per_million=0.10),
+        capabilities={"plan": 1, "build": 1, "audit": 1},
         supports_cache=True,
     )
     balanced = ProviderModelConfig(
         provider="fake",
         model_id="balanced-code-model",
         pricing=ModelPricing(input_per_million=0.25, output_per_million=0.75),
+        capabilities={"plan": 2, "build": 3, "audit": 2},
         supports_cache=True,
         supports_tools=True,
     )
@@ -101,6 +106,7 @@ def default_config() -> OrchestratorConfig:
         provider="fake",
         model_id="strong-audit-model",
         pricing=ModelPricing(input_per_million=1.00, output_per_million=3.00),
+        capabilities={"plan": 3, "build": 2, "audit": 3},
         supports_cache=True,
         supports_tools=True,
     )

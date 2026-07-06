@@ -49,6 +49,38 @@ class RouterTests(unittest.TestCase):
 
         self.assertEqual(decision.estimated_cost_usd, 0.15)
 
+    def test_phase_providers_cheapest_capable_first_medium(self):
+        config = default_config()
+        router = Router(
+            pricing={m: p.pricing for m, p in config.providers.items()},
+            capabilities={m: dict(p.capabilities) for m, p in config.providers.items()},
+        )
+
+        decision = router.route_task("implement budget ledger tests")
+
+        self.assertEqual(decision.phase_providers["build"][0], "balanced-code-model")
+        self.assertEqual(
+            decision.phase_providers["plan"],
+            ["balanced-code-model", "strong-audit-model"],
+        )
+
+    def test_phase_providers_high_tier_requires_strong_plan_and_audit(self):
+        config = default_config()
+        router = Router(
+            pricing={m: p.pricing for m, p in config.providers.items()},
+            capabilities={m: dict(p.capabilities) for m, p in config.providers.items()},
+        )
+
+        decision = router.route_task("audit the repair loop for safety regressions")
+
+        self.assertEqual(decision.phase_providers["plan"], ["strong-audit-model"])
+        self.assertEqual(decision.phase_providers["audit"], ["strong-audit-model"])
+
+    def test_phase_providers_empty_without_capabilities(self):
+        decision = Router().route_task("implement budget ledger tests")
+
+        self.assertEqual(decision.phase_providers, {})
+
 
 if __name__ == "__main__":
     unittest.main()

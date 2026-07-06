@@ -67,6 +67,21 @@ class ConfigLoadingTests(unittest.TestCase):
 
         self.assertAlmostEqual(cost, 0.25 + 0.75)
 
+    def test_config_file_can_set_capabilities(self):
+        config = config_from_dict(
+            {
+                "providers": {
+                    "mini-coder": {
+                        "provider": "openai",
+                        "pricing": {"input_per_million": 0.1, "output_per_million": 0.4},
+                        "capabilities": {"plan": 1, "build": 2, "audit": 1},
+                    }
+                }
+            }
+        )
+
+        self.assertEqual(config.providers["mini-coder"].capabilities["build"], 2)
+
 
 if __name__ == "__main__":
     unittest.main()

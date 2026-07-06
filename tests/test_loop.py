@@ -128,6 +128,18 @@ class LoopRunnerTests(unittest.TestCase):
         execute_events = [event for event in result.events if event["state"] == "execute"]
         self.assertTrue(execute_events[0]["output_refs"])
 
+    def test_loop_binds_phases_to_capable_providers(self):
+        runner = LoopRunner(config=default_config())
+        result = runner.run("implement a small budget ledger improvement", task_id="task_phase")
+
+        self.assertEqual(result.status, "succeeded")
+        plan_events = [e for e in result.events if e["state"] == "plan"]
+        audit_events = [e for e in result.events if e["state"] == "audit"]
+        execute_events = [e for e in result.events if e["state"] == "execute"]
+        self.assertEqual(plan_events[0]["provider"], "balanced-code-model")
+        self.assertEqual(audit_events[0]["provider"], "balanced-code-model")
+        self.assertEqual(execute_events[0]["provider"], "balanced-code-model")
+
     def test_provider_timeout_retries_before_success(self):
         config = default_config()
         providers = {

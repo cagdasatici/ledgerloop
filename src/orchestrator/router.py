@@ -15,6 +15,11 @@ _FALLBACK_TIER_COST = {"low": 0.03, "medium": 0.15, "high": 0.50}
 # wraps every task, before the task's own words are added.
 _PROMPT_BASE_TOKENS = 1200
 
+# Minimum capability score a model needs for a phase, per routed tier.
+REQUIRED_CAPABILITY = {"low": 1, "medium": 2, "high": 3}
+
+PHASES = ("plan", "build", "audit")
+
 
 @dataclass(frozen=True)
 class RoutingDecision:
@@ -29,6 +34,7 @@ class RoutingDecision:
     risk: str
     complexity: str
     intent: str
+    phase_providers: Dict[str, List[str]] = field(default_factory=dict)
 
     def to_dict(self) -> dict:
         return {
@@ -43,6 +49,9 @@ class RoutingDecision:
             "risk": self.risk,
             "complexity": self.complexity,
             "intent": self.intent,
+            "phase_providers": dict(
+                (phase, list(models)) for phase, models in self.phase_providers.items()
+            ),
         }
 
 
@@ -54,6 +63,7 @@ class Router:
     balanced_models: List[str] = field(default_factory=lambda: ["balanced-code-model", "cheap-fast-model"])
     strong_models: List[str] = field(default_factory=lambda: ["strong-audit-model", "balanced-code-model"])
     pricing: Optional[Dict[str, ModelPricing]] = None
+    capabilities: Optional[Dict[str, Dict[str, int]]] = None
 
     def route_task(self, task_description: str, user_override: str = "") -> RoutingDecision:
         text = (task_description + " " + user_override).lower()
@@ -77,6 +87,7 @@ class Router:
             providers = self.cheap_models
 
         estimated_cost = self._estimate_cost(tier, providers, estimated_input, estimated_output)
+        phase_providers = self._phase_providers(tier)
         requires_approval = risk == "high"
         reason = "%s intent with %s complexity and %s risk." % (intent, complexity, risk)
         return RoutingDecision(
@@ -91,7 +102,45 @@ class Router:
             risk=risk,
             complexity=complexity,
             intent=intent,
+            phase_providers=phase_providers,
         )
+
+    def _phase_providers(self, tier: str) -> Dict[str, List[str]]:
+        """Cheapest-capable-first provider list per phase.
+
+        For each phase, keep models whose declared capability for that phase
+        meets REQUIRED_CAPABILITY[tier], sorted by input price ascending.
+        If no model qualifies, fall back to all known models sorted by that
+        phase's capability descending then price ascending, so the loop can
+        still run (escalation and audit provide the quality floor).
+        """
+
+        if not self.capabilities:
+            return {}
+
+        phase_providers = {}
+        required = REQUIRED_CAPABILITY[tier]
+        for phase in PHASES:
+            known_models = []
+            qualifying = []
+            for model_id, scores in self.capabilities.items():
+                capability = int(scores.get(phase, 0))
+                input_price = 0.0
+                if self.pricing and model_id in self.pricing:
+                    input_price = self.pricing[model_id].input_per_million
+                known_models.append((model_id, capability, input_price))
+                if capability >= required and capability > 0:
+                    qualifying.append((model_id, input_price))
+
+            if qualifying:
+                qualifying.sort(key=lambda item: (item[1], item[0]))
+                phase_providers[phase] = [model_id for model_id, _price in qualifying]
+                continue
+
+            known_models.sort(key=lambda item: (-item[1], item[2], item[0]))
+            phase_providers[phase] = [model_id for model_id, _capability, _price in known_models]
+
+        return phase_providers
 
     def _estimate_cost(
         self, tier: str, providers: List[str], input_tokens: int, output_tokens: int

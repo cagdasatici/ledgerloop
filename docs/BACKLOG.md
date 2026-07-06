@@ -15,22 +15,21 @@ loop, unified cost math, per-phase event audit trail, durable run identity,
 and a default-deny action gate. Remaining findings are precision issues and
 the known strategic gaps, all of which are specified as concrete work items
 in `docs/IMPLEMENTATION_GUIDE.md`:
-- **Roles are labels, not bindings** — one provider serves the whole run;
-  `role="builder"` on every call. The core cost-efficiency thesis (strong
-  model plans/audits, cheap model builds) needs per-phase binding. → WI-2/WI-3.
+- **Planner handoff is still conceptual** — the loop now binds plan/build/audit
+  to phase-capable providers, but the plan stage still only assembles a prompt.
+  A real `PlanSpec` handoff artifact is still needed. → WI-3.
 - Carried P2s: nobody honors `delay_for` (→ WI-5); failed attempts record
   zero budget (→ WI-5); cross-run budgets missing (→ WI-4); artifacts not
   persisted (→ WI-6); lesson-from-failure missing (→ WI-7).
 
 ## Next up
 
-**Execute `docs/IMPLEMENTATION_GUIDE.md`, work items WI-2 through WI-8, in
+**Execute `docs/IMPLEMENTATION_GUIDE.md`, work items WI-3 through WI-8, in
 order, one commit each.** The guide contains exact file changes, test names,
 assertions, and commit messages. Summary of what it covers:
 
 | WI | What |
 |----|------|
-| 2 | Capability matrix + per-phase provider binding (core adaptive-routing feature) |
 | 3 | Planner output schema (`PlanSpec`) + plan-phase provider call + handoff into build prompt |
 | 4 | Cross-run budgets: persisted `cost_records` + `global_max_usd` cap at intake |
 | 5 | Retry sleep hook (injectable sleeper) + per-attempt usage recording |
@@ -85,3 +84,4 @@ assertions, and commit messages. Summary of what it covers:
 - ~~Action-time safety contract for builder-proposed actions.~~ Reviewed 2026-07-04.
 - ~~Action classifier hardening: command actions default-deny unless explicitly low-risk; network execution and credential access high-risk.~~ Independently re-verified 2026-07-06 (attack probes block; allowlist and default-deny confirmed).
 - ~~Safety classifier precision: word-boundary dependency terms, `ls` prefix tightening, token/secret access-shape matching.~~ Shipped 2026-07-06; false positives reproduced in review no longer block.
+- ~~Capability matrix and per-phase provider binding.~~ Shipped 2026-07-06; routing now emits `phase_providers` and the loop binds plan/build/audit to the cheapest capable model per phase.

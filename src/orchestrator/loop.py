@@ -110,7 +110,11 @@ class LoopRunner:
             pricing={
                 model_id: provider.pricing
                 for model_id, provider in self.config.providers.items()
-            }
+            },
+            capabilities={
+                model_id: dict(provider.capabilities)
+                for model_id, provider in self.config.providers.items()
+            },
         )
         self.memory = memory or MemoryStore(project_id=self.config.project_id)
         self.providers = providers or {
@@ -178,15 +182,17 @@ class LoopRunner:
         )
 
         prompt_bundle = self._build_bundle(envelope, routing, retrieved, None, {})
+        provider = self._select_provider_for_phase(routing, "build")
+        audit_provider = self._select_provider_for_phase(routing, "audit")
+        plan_provider = self._select_provider_for_phase(routing, "plan")
         self.events.append(
             task_id,
             "plan",
             "planner",
+            provider=plan_provider.model_id,
             message="Prompt bundle assembled.",
             output_refs=[prompt_bundle.full_hash],
         )
-
-        provider = self._select_provider(routing)
         repair_attempts: Dict[str, int] = {}
         last_failure: Optional[ValidationResult] = None
         last_message = ""
@@ -320,7 +326,7 @@ class LoopRunner:
                 task_id,
                 "audit",
                 "auditor",
-                provider="local",
+                provider=audit_provider.model_id,
                 iteration=iteration,
                 failure_fingerprint=audit.failure_fingerprint,
                 status="succeeded" if audit.passed else "failed",
@@ -606,6 +612,15 @@ class LoopRunner:
         if self.providers:
             return next(iter(self.providers.values()))
         return FakeProviderAdapter()
+
+    def _select_provider_for_phase(
+        self, routing: RoutingDecision, phase: str
+    ) -> ProviderAdapter:
+        preference = routing.phase_providers.get(phase) or routing.provider_preference
+        for model_id in preference:
+            if model_id in self.providers:
+                return self.providers[model_id]
+        return self._select_provider(routing)
 
     def _result(
         self,
