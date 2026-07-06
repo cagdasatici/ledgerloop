@@ -267,6 +267,39 @@ class SQLiteStoreTests(unittest.TestCase):
 
         self.assertAlmostEqual(total, 0.3)
 
+    def test_cli_persists_artifacts_to_sqlite(self):
+        stdout = io.StringIO()
+        stderr = io.StringIO()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = str(pathlib.Path(tmpdir) / "ledgerloop.db")
+            code = main(
+                [
+                    "--sqlite-path",
+                    db_path,
+                    "--json",
+                    "explain LedgerLoop architecture",
+                ],
+                stdout=stdout,
+                stderr=stderr,
+            )
+            payload = json.loads(stdout.getvalue())
+            connection = sqlite3.connect(db_path)
+            artifact_rows = connection.execute(
+                """
+                SELECT artifact_id FROM artifacts
+                ORDER BY artifact_id
+                """
+            ).fetchall()
+            artifact_ids = {row[0] for row in artifact_rows}
+            connection.close()
+
+        self.assertEqual(code, 0)
+        self.assertEqual(len(artifact_rows), len(payload["artifacts"]))
+        for event in payload["events"]:
+            for output_ref in event["output_refs"]:
+                if output_ref.startswith("art_"):
+                    self.assertIn(output_ref, artifact_ids)
+
 
 if __name__ == "__main__":
     unittest.main()

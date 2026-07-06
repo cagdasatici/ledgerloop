@@ -15,7 +15,7 @@ from orchestrator.events import EventLog, LoopEvent, redact_text, utc_now_iso
 from orchestrator.memory import Curator, MemoryItem, MemoryStore
 
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 
 def _json_dump(value: Any) -> str:
@@ -169,6 +169,22 @@ class SQLiteMixin:
                 """
                 CREATE INDEX IF NOT EXISTS idx_cost_records_project_created
                 ON cost_records (project_id, created_at)
+                """
+            )
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS artifacts (
+                    project_id TEXT NOT NULL,
+                    run_id TEXT NOT NULL,
+                    artifact_id TEXT NOT NULL,
+                    task_id TEXT NOT NULL,
+                    kind TEXT NOT NULL,
+                    ref TEXT NOT NULL,
+                    summary TEXT NOT NULL,
+                    iteration INTEGER NOT NULL,
+                    created_at TEXT NOT NULL,
+                    PRIMARY KEY (project_id, run_id, artifact_id)
+                )
                 """
             )
             for version in range(1, SCHEMA_VERSION + 1):
@@ -521,6 +537,34 @@ class SQLiteEventLog(SQLiteMixin, EventLog):
                 (self.project_id,),
             ).fetchone()
         return float(row[0] or 0.0)
+
+    def record_artifacts(self, artifacts: List[Dict[str, Any]]) -> None:
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            connection.executemany(
+                """
+                INSERT OR REPLACE INTO artifacts (
+                    project_id, run_id, artifact_id, task_id, kind, ref,
+                    summary, iteration, created_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                [
+                    (
+                        self.project_id,
+                        self.run_id,
+                        artifact["artifact_id"],
+                        artifact["task_id"],
+                        artifact["kind"],
+                        artifact["ref"],
+                        redact_text(artifact["summary"]),
+                        artifact["iteration"],
+                        artifact["created_at"],
+                    )
+                    for artifact in artifacts
+                ],
+            )
+            connection.commit()
 
     def _event_to_row(self, sequence: int, event: LoopEvent) -> tuple:
         return (

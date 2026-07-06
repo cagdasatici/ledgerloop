@@ -12,7 +12,7 @@ providers.
 **Phase 1 complete and hardened.** All ten minimum acceptance criteria from the
 functional spec are met. Published at
 [github.com/cagdasatici/ledgerloop](https://github.com/cagdasatici/ledgerloop)
-(private) with GitHub Actions CI (Python 3.9 / 3.11 / 3.13). 71 unit tests
+(private) with GitHub Actions CI (Python 3.9 / 3.11 / 3.13). 72 unit tests
 passing locally.
 
 ## Architecture
@@ -54,6 +54,7 @@ under `src/orchestrator/`:
 - **Command safety hardening** — network execution, credential access, deploy/push/delete, dependency changes, and unknown command strings are blocked pending approval; only explicit low-risk command prefixes are allowed automatically.
 - **Safety classifier precision fixes** — dependency-change detection now uses word boundaries, low-risk prefix matching no longer misclassifies `lsof` via `ls`, and token/secret mentions only block when they look like access shapes rather than normal engineering text.
 - **Artifact tracking** — builder edits, validation/audit results, and the final report are recorded with content hashes; events carry `output_refs`; `LoopResult` exposes `artifacts` and `changed_artifacts`.
+- **Artifact durability** — SQLite-backed runs now persist artifact metadata alongside events and run results, so `art_` references remain resolvable after the process exits.
 - **Config files** — JSON or TOML, layered onto the mock defaults; unknown keys ignored.
 - **SQLite persistence** — opt-in SQLite backend for memories and event logs via `--sqlite-path`; JSON remains the bootstrap default. Memory writes use per-item UPSERTs, durable events are project/run scoped, and final run results are persisted.
 - **Secret redaction** — event messages and memory summaries redact common API key/token/password shapes before durable persistence.

@@ -751,4 +751,7 @@ class LoopRunner:
         recorder = getattr(self.events, "record_run_result", None)
         if recorder:
             recorder(result)
+        artifact_recorder = getattr(self.events, "record_artifacts", None)
+        if artifact_recorder:
+            artifact_recorder(self.artifacts.to_list())
         return result
