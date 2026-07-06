@@ -46,6 +46,22 @@ class SafetyPolicyTests(unittest.TestCase):
         self.assertTrue(decision.allowed)
         self.assertEqual(decision.action, "execute")
 
+    def test_intake_allows_goals_that_merely_mention_packagey_words(self):
+        policy = SafetyPolicy(project_root="/tmp/project")
+        for goal in [
+            "improve the package structure of the orchestrator",
+            "write documentation for the requirements of phase 2",
+            "refactor the installer message strings",
+        ]:
+            decision = policy.evaluate_task(goal, env={})
+            self.assertTrue(decision.allowed, goal)
+
+    def test_intake_still_blocks_real_dependency_changes_without_env(self):
+        policy = SafetyPolicy(project_root="/tmp/project")
+        decision = policy.evaluate_task("pip install requests", env={})
+
+        self.assertFalse(decision.allowed)
+
     def test_evaluate_action_blocks_dependency_action_without_isolation(self):
         policy = SafetyPolicy(project_root="/tmp/project")
         action = ProposedAction(
@@ -103,6 +119,14 @@ class SafetyPolicyTests(unittest.TestCase):
         self.assertFalse(decision.allowed)
         self.assertEqual(decision.risk, "high")
 
+    def test_lsof_is_not_lowlisted_by_ls_prefix(self):
+        policy = SafetyPolicy(project_root="/tmp/project")
+        action = ProposedAction("a", "command", "Check ports", "lsof -i :8080")
+
+        decision = policy.evaluate_action(action, env={})
+
+        self.assertFalse(decision.allowed)
+
     def test_evaluate_action_blocks_unknown_command_by_default(self):
         policy = SafetyPolicy(project_root="/tmp/project")
         action = ProposedAction(
@@ -148,6 +172,14 @@ class SafetyPolicyTests(unittest.TestCase):
 
         self.assertTrue(decision.allowed)
         self.assertEqual(decision.risk, "low")
+
+    def test_token_mention_in_edit_description_is_not_high_risk(self):
+        policy = SafetyPolicy(project_root="/tmp/project")
+        action = ProposedAction("a", "edit", "Improve token accounting math", "")
+
+        decision = policy.evaluate_action(action, env={})
+
+        self.assertTrue(decision.allowed)
 
 
 if __name__ == "__main__":

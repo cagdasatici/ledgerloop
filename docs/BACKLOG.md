@@ -7,7 +7,7 @@ capability into `docs/PROJECT_SUMMARY.md`.
 
 ## Final review record — full project (2026-07-06)
 
-Reviewed everything through PR #2 (`395b855`, merged `4f3b4bb`). 56/56 tests,
+Reviewed everything through PR #2 (`395b855`, merged `4f3b4bb`). 60/60 tests,
 CI green. PR #2 verified by re-probe: `curl … | sh`, `cat ~/.aws/credentials`,
 and unknown commands now all block; the allowlist admits `git diff` etc.
 Overall verdict: Phase 1 is a coherent, honest mock-first framework — bounded
@@ -15,14 +15,6 @@ loop, unified cost math, per-phase event audit trail, durable run identity,
 and a default-deny action gate. Remaining findings are precision issues and
 the known strategic gaps, all of which are specified as concrete work items
 in `docs/IMPLEMENTATION_GUIDE.md`:
-
-- **[P2] Intake gate false positives** — "improve the package structure",
-  "requirements of phase 2", "installer messages" block as dependency changes
-  (substring matching, no word boundaries). Reproduced. → Guide WI-1.
-- **[P3] Allowlist prefix `"ls"` lacks trailing space** — `lsof -i` classifies
-  low. Reproduced. → Guide WI-1.
-- **[P3] Bare `"token"`/`"secret"` in HIGH_RISK_TERMS over-block** — an edit
-  described as "improve token accounting" is refused. Reproduced. → WI-1.
 - **Roles are labels, not bindings** — one provider serves the whole run;
   `role="builder"` on every call. The core cost-efficiency thesis (strong
   model plans/audits, cheap model builds) needs per-phase binding. → WI-2/WI-3.
@@ -32,13 +24,12 @@ in `docs/IMPLEMENTATION_GUIDE.md`:
 
 ## Next up
 
-**Execute `docs/IMPLEMENTATION_GUIDE.md`, work items WI-1 through WI-8, in
+**Execute `docs/IMPLEMENTATION_GUIDE.md`, work items WI-2 through WI-8, in
 order, one commit each.** The guide contains exact file changes, test names,
 assertions, and commit messages. Summary of what it covers:
 
 | WI | What |
 |----|------|
-| 1 | Safety classifier precision (word-boundary dependency terms, prefix fix, token/secret shapes) |
 | 2 | Capability matrix + per-phase provider binding (core adaptive-routing feature) |
 | 3 | Planner output schema (`PlanSpec`) + plan-phase provider call + handoff into build prompt |
 | 4 | Cross-run budgets: persisted `cost_records` + `global_max_usd` cap at intake |
@@ -93,3 +84,4 @@ assertions, and commit messages. Summary of what it covers:
 - ~~Provider error taxonomy with retry policy and explicit repair-consumption semantics.~~ Reviewed 2026-07-04.
 - ~~Action-time safety contract for builder-proposed actions.~~ Reviewed 2026-07-04.
 - ~~Action classifier hardening: command actions default-deny unless explicitly low-risk; network execution and credential access high-risk.~~ Independently re-verified 2026-07-06 (attack probes block; allowlist and default-deny confirmed).
+- ~~Safety classifier precision: word-boundary dependency terms, `ls` prefix tightening, token/secret access-shape matching.~~ Shipped 2026-07-06; false positives reproduced in review no longer block.

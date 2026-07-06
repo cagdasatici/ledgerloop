@@ -1,6 +1,7 @@
 """Safety policy and environment isolation checks."""
 
 import os
+import re
 from dataclasses import dataclass, field
 from typing import Dict, Optional
 
@@ -50,19 +51,14 @@ class ActionSafetyBlocked(SafetyViolation):
         self.decision = decision
 
 
-DEPENDENCY_TERMS = (
-    "install",
-    "dependency",
-    "dependencies",
-    "lockfile",
-    "requirements",
-    "pip ",
-    "pip install",
-    "package",
-    "packages",
-    "poetry",
-    "npm",
+DEPENDENCY_RE = re.compile(
+    r"\b(install|installs|installing|dependency|dependencies|lockfile|"
+    r"requirements\.txt|pip|poetry|npm|yarn)\b"
 )
+
+
+def _mentions_dependency_change(text: str) -> bool:
+    return bool(DEPENDENCY_RE.search(text))
 
 HIGH_RISK_TERMS = (
     "push",
@@ -83,8 +79,10 @@ HIGH_RISK_TERMS = (
     ".env",
     "credentials",
     "credential",
-    "secret",
-    "token",
+    "token=",
+    "secret=",
+    "secrets.",
+    ".token",
     "api_key",
     "api-key",
 )
@@ -92,7 +90,7 @@ HIGH_RISK_TERMS = (
 LOW_RISK_ACTION_TERMS = ("read", "test", "inspect", "format")
 LOW_RISK_COMMAND_PREFIXES = (
     "cat ",
-    "ls",
+    "ls ",
     "pwd",
     "sed ",
     "head ",
@@ -130,7 +128,7 @@ class SafetyPolicy:
 
         risk = self.classify_action(description, command)
         text = (description + " " + command).lower()
-        if any(term in text for term in DEPENDENCY_TERMS):
+        if _mentions_dependency_change(text):
             dependency = self.verify_dependency_environment(env=env)
             if not dependency.allowed:
                 return SafetyDecision("dependency_change", "high", False, dependency.reason)
@@ -148,7 +146,7 @@ class SafetyPolicy:
 
         risk = self.classify_action(action.kind + " " + action.description, action.command)
         text = ("%s %s %s" % (action.kind, action.description, action.command)).lower()
-        if any(term in text for term in DEPENDENCY_TERMS):
+        if _mentions_dependency_change(text):
             dependency = self.verify_dependency_environment(env=env)
             return SafetyDecision(
                 action=action.kind,
