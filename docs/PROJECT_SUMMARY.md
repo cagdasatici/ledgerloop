@@ -12,7 +12,7 @@ providers.
 **Phase 1 complete and hardened.** All ten minimum acceptance criteria from the
 functional spec are met. Published at
 [github.com/cagdasatici/ledgerloop](https://github.com/cagdasatici/ledgerloop)
-(private) with GitHub Actions CI (Python 3.9 / 3.11 / 3.13). 72 unit tests
+(private) with GitHub Actions CI (Python 3.9 / 3.11 / 3.13). 73 unit tests
 passing locally.
 
 ## Architecture
@@ -46,6 +46,7 @@ under `src/orchestrator/`:
 - **Unified cost model** — router pre-flight estimate and ledger enforcement share `ModelPricing.cost_for`, so they cannot diverge.
 - **Deterministic prompts** — stable full and cacheable-prefix hashes; cacheable prefix stays constant across repair iterations.
 - **Scoped memory** — similarity-based retrieval that excludes irrelevant items; repeated lessons are merged, not appended.
+- **Failure-memory consolidation** — when a run blocks after exhausting repairs, LedgerLoop now writes a deduping lesson memory keyed by the failure fingerprint and goal.
 - **Safety gate wired into the loop** — dependency-changing tasks are rejected unless an approved isolated environment (project-local venv / configured container) is active; a `safety_gate` event is always emitted.
 - **Closed-loop repair + escalation** — failure fingerprint, message, and attempt counts are fed back into the next prompt; at the repair cap the loop escalates to the next stronger provider tier (ordered by input pricing) and resets the counter, blocking only when no stronger tier remains.
 - **Provider error taxonomy** — timeout, rate-limit, auth, refusal, and malformed-output failures define retryability and whether they consume a repair attempt. Retry policy records structured retry events without sleeping inside the core loop.

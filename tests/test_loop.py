@@ -355,6 +355,38 @@ class LoopRunnerTests(unittest.TestCase):
         reasons = [r.reason for r in runner.budget.records]
         self.assertIn("failed_attempt", reasons)
 
+    def test_blocked_repair_run_writes_failure_lesson(self):
+        base = default_config()
+        config = OrchestratorConfig(
+            project_id=base.project_id,
+            budget=BudgetConfig(max_repair_attempts=0, max_iterations=2),
+            safety=base.safety,
+            providers=base.providers,
+        )
+
+        def always_fail(iteration, response_text):
+            return ValidationResult.failure("validate:test:logic", "still failing")
+
+        runner = LoopRunner(config=config)
+        result = runner.run(
+            "implement something unfixable",
+            task_id="task_lesson",
+            validator=always_fail,
+        )
+
+        self.assertEqual(result.status, "blocked")
+        lessons = [i for i in runner.memory.items if i.type == "lesson"]
+        self.assertEqual(len(lessons), 1)
+        self.assertIn("validate:test:logic", lessons[0].summary)
+
+        runner2 = LoopRunner(config=config, memory=runner.memory)
+        runner2.run(
+            "implement something unfixable",
+            task_id="task_lesson_2",
+            validator=always_fail,
+        )
+        self.assertEqual(len([i for i in runner.memory.items if i.type == "lesson"]), 1)
+
 
 if __name__ == "__main__":
     unittest.main()

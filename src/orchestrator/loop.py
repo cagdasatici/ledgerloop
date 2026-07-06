@@ -7,7 +7,7 @@ from orchestrator.artifacts import ArtifactStore
 from orchestrator.budget import BudgetExceeded, BudgetLedger
 from orchestrator.config import OrchestratorConfig, default_config
 from orchestrator.events import EventLog, utc_now_iso
-from orchestrator.memory import MemoryStore
+from orchestrator.memory import MemoryItem, MemoryStore
 from orchestrator.plan import PlanSpec, plan_from_provider_text
 from orchestrator.prompts import PromptBundle, assemble_prompt_bundle, stable_memory_summary
 from orchestrator.providers import FakeProviderAdapter, ProviderAdapter, ProviderError, RetryPolicy
@@ -428,6 +428,26 @@ class LoopRunner:
         else:
             final_status = "blocked"
             last_message = "Iteration limit reached."
+
+        if final_status == "blocked" and last_failure is not None:
+            lesson = MemoryItem(
+                id="mem_%s_%s"
+                % (self.events.run_id, last_failure.failure_fingerprint or "unknown"),
+                project_id=self.config.project_id,
+                type="lesson",
+                scope="global",
+                summary="Repeated failure %s was not repairable within limits for goal: %s"
+                % (last_failure.failure_fingerprint, user_goal),
+                tags=["failure", "repair"],
+            )
+            merge = self.memory.add_or_merge(lesson)
+            self.events.append(
+                task_id,
+                "consolidate_memory",
+                "memory_curator",
+                status="succeeded",
+                message="Lesson %s (%s)." % (merge["memory_id"], merge["action"]),
+            )
 
         report_artifact = self.artifacts.add(
             task_id,
