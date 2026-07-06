@@ -139,7 +139,7 @@ class FakeProviderAdapter(ProviderAdapter):
         max_output_tokens: int = 256,
         metadata: Optional[Dict[str, str]] = None,
     ) -> ProviderResponse:
-        if self.failures:
+        if role == "builder" and self.failures:
             error = self.failures.pop(0)
             if not error.provider_model:
                 error.provider_model = self.model_id

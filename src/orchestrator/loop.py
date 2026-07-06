@@ -8,6 +8,7 @@ from orchestrator.budget import BudgetExceeded, BudgetLedger
 from orchestrator.config import OrchestratorConfig, default_config
 from orchestrator.events import EventLog, utc_now_iso
 from orchestrator.memory import MemoryStore
+from orchestrator.plan import PlanSpec, plan_from_provider_text
 from orchestrator.prompts import PromptBundle, assemble_prompt_bundle, stable_memory_summary
 from orchestrator.providers import FakeProviderAdapter, ProviderAdapter, ProviderError, RetryPolicy
 from orchestrator.router import Router, RoutingDecision
@@ -181,17 +182,66 @@ class LoopRunner:
             message="Retrieved %d memory items." % len(retrieved),
         )
 
-        prompt_bundle = self._build_bundle(envelope, routing, retrieved, None, {})
+        prompt_bundle = self._build_bundle(envelope, routing, retrieved, None, {}, None)
         provider = self._select_provider_for_phase(routing, "build")
         audit_provider = self._select_provider_for_phase(routing, "audit")
         plan_provider = self._select_provider_for_phase(routing, "plan")
+        try:
+            plan_estimate = plan_provider.estimate_usage(prompt_bundle.full_prompt)
+            plan_estimated_usd = self.budget.assert_can_spend(
+                plan_provider.model_id, plan_estimate, "plan"
+            )
+            plan_response = plan_provider.complete(
+                prompt_bundle.full_prompt, role="planner", metadata={"task_id": task_id}
+            )
+            self.budget.record_actual(
+                plan_provider.model_id,
+                plan_response.usage,
+                reason="plan",
+                estimated_usd=plan_estimated_usd,
+            )
+            plan_spec = plan_from_provider_text(
+                user_goal, plan_provider.model_id, plan_response.text
+            )
+        except ProviderError as exc:
+            final_status = "blocked"
+            last_message = "Provider %s failure from %s: %s" % (
+                exc.kind,
+                plan_provider.model_id,
+                exc.message,
+            )
+            self.events.append(
+                task_id,
+                "report",
+                "reporter",
+                status=final_status,
+                message=last_message,
+            )
+            return self._result("blocked", envelope, routing, "", "", last_message)
+        except BudgetExceeded as exc:
+            last_message = str(exc)
+            self.events.append(
+                task_id,
+                "report",
+                "reporter",
+                status="blocked",
+                message=last_message,
+            )
+            return self._result("blocked", envelope, routing, "", "", last_message)
+        prompt_bundle = self._build_bundle(envelope, routing, retrieved, None, {}, plan_spec)
+        plan_artifact = self.artifacts.add(
+            task_id,
+            "plan",
+            plan_response.text,
+            summary="Plan from %s." % plan_provider.model_id,
+        )
         self.events.append(
             task_id,
             "plan",
             "planner",
             provider=plan_provider.model_id,
-            message="Prompt bundle assembled.",
-            output_refs=[prompt_bundle.full_hash],
+            message="Plan produced with %d steps." % len(plan_spec.steps),
+            output_refs=[plan_artifact.artifact_id],
         )
         repair_attempts: Dict[str, int] = {}
         last_failure: Optional[ValidationResult] = None
@@ -203,7 +253,7 @@ class LoopRunner:
                 # Closed-loop repair: rebuild the dynamic sections so the next
                 # attempt sees what failed. Cacheable prefix stays stable.
                 prompt_bundle = self._build_bundle(
-                    envelope, routing, retrieved, last_failure, repair_attempts
+                    envelope, routing, retrieved, last_failure, repair_attempts, plan_spec
                 )
             try:
                 response_text = self._execute_provider(
@@ -582,6 +632,7 @@ class LoopRunner:
         retrieved: List,
         last_failure: Optional[ValidationResult],
         repair_attempts: Dict[str, int],
+        plan_spec: Optional[PlanSpec] = None,
     ) -> PromptBundle:
         repair_context: Dict[str, object] = {}
         if last_failure is not None:
@@ -590,6 +641,9 @@ class LoopRunner:
                 "failure_message": last_failure.message,
                 "repair_attempts": dict(repair_attempts),
             }
+        current_task_payload = {"task": envelope.to_dict(), "routing": routing.to_dict()}
+        if plan_spec is not None:
+            current_task_payload["plan"] = plan_spec.to_dict()
         return assemble_prompt_bundle(
             system_contract={
                 "role": "bounded local code-build-audit orchestrator",
@@ -602,7 +656,7 @@ class LoopRunner:
                 "recent_events": self.events.to_list()[-3:],
                 "repair_context": repair_context,
             },
-            current_task_payload={"task": envelope.to_dict(), "routing": routing.to_dict()},
+            current_task_payload=current_task_payload,
         )
 
     def _select_provider(self, routing: RoutingDecision) -> ProviderAdapter:

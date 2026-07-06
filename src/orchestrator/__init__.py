@@ -5,6 +5,7 @@ from orchestrator.budget import BudgetExceeded, BudgetLedger
 from orchestrator.config import BudgetConfig, OrchestratorConfig, config_from_dict, load_config
 from orchestrator.loop import LoopResult, LoopRunner, TaskEnvelope, ValidationResult
 from orchestrator.memory import MemoryItem, MemoryStore
+from orchestrator.plan import PlanSpec, plan_from_provider_text
 from orchestrator.providers import (
     FakeProviderAdapter,
     ProviderAuthError,
@@ -39,6 +40,7 @@ __all__ = [
     "MemoryItem",
     "MemoryStore",
     "OrchestratorConfig",
+    "PlanSpec",
     "ActionSafetyBlocked",
     "ProposedAction",
     "ProviderAuthError",
@@ -61,4 +63,5 @@ __all__ = [
     "ValidationResult",
     "config_from_dict",
     "load_config",
+    "plan_from_provider_text",
 ]

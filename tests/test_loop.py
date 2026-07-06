@@ -122,7 +122,7 @@ class LoopRunnerTests(unittest.TestCase):
         result = runner.run("implement a small budget ledger improvement", task_id="task_art")
 
         kinds = {artifact["kind"] for artifact in result.artifacts}
-        self.assertEqual(kinds, {"edit", "validation", "audit", "report"})
+        self.assertEqual(kinds, {"plan", "edit", "validation", "audit", "report"})
         self.assertEqual(len(result.changed_artifacts), 1)
         self.assertEqual(result.changed_artifacts[0]["kind"], "edit")
         execute_events = [event for event in result.events if event["state"] == "execute"]
@@ -139,6 +139,17 @@ class LoopRunnerTests(unittest.TestCase):
         self.assertEqual(plan_events[0]["provider"], "balanced-code-model")
         self.assertEqual(audit_events[0]["provider"], "balanced-code-model")
         self.assertEqual(execute_events[0]["provider"], "balanced-code-model")
+
+    def test_plan_phase_calls_planner_and_records_artifact(self):
+        runner = LoopRunner(config=default_config())
+        result = runner.run("implement a small budget ledger improvement", task_id="task_planned")
+
+        self.assertEqual(result.status, "succeeded")
+        plan_artifacts = [a for a in result.artifacts if a["kind"] == "plan"]
+        self.assertEqual(len(plan_artifacts), 1)
+        plan_events = [e for e in result.events if e["state"] == "plan"]
+        self.assertTrue(plan_events[0]["output_refs"])
+        self.assertEqual(result.budget["records"], 2)
 
     def test_provider_timeout_retries_before_success(self):
         config = default_config()
