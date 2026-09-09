@@ -1,6 +1,6 @@
 """Bounded mock-first loop runner."""
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Callable, Dict, List, Optional
 
 from orchestrator.artifacts import ArtifactStore
@@ -774,4 +774,33 @@ class LoopRunner:
         artifact_recorder = getattr(self.events, "record_artifacts", None)
         if artifact_recorder:
             artifact_recorder(self.artifacts.to_list())
+        feedback_recorder = getattr(self.router, "record_result", None)
+        if feedback_recorder:
+            try:
+                feedback_result = feedback_recorder(result, list(self.budget.records))
+                skipped = (
+                    feedback_result.get("skipped")
+                    if isinstance(feedback_result, dict)
+                    else None
+                )
+                self.events.append(
+                    envelope.task_id,
+                    "learn",
+                    "router",
+                    status="succeeded",
+                    message=(
+                        "Routing feedback skipped: %s" % skipped
+                        if skipped
+                        else "Routing outcome recorded."
+                    ),
+                )
+            except Exception as error:  # routing telemetry must not erase task output
+                self.events.append(
+                    envelope.task_id,
+                    "learn",
+                    "router",
+                    status="failed",
+                    message="Routing outcome was not recorded: %s" % type(error).__name__,
+                )
+            result = replace(result, events=self.events.to_list())
         return result

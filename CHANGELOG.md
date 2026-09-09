@@ -1,3 +1,9 @@
+## 0.2.1
+
+- Added optional router metadata and a duck-typed `record_result` feedback hook
+  so an external learning router can consume loop outcomes without coupling the
+  execution core to that router's package.
+
 ## 0.2.0
 
 - Tightened safety-classifier precision for dependency terms, low-risk prefixes, and token/secret mention handling.

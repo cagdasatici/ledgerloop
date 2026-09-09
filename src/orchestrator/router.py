@@ -35,6 +35,7 @@ class RoutingDecision:
     complexity: str
     intent: str
     phase_providers: Dict[str, List[str]] = field(default_factory=dict)
+    metadata: Dict[str, str] = field(default_factory=dict)
 
     def to_dict(self) -> dict:
         return {
@@ -52,6 +53,7 @@ class RoutingDecision:
             "phase_providers": dict(
                 (phase, list(models)) for phase, models in self.phase_providers.items()
             ),
+            "metadata": dict(self.metadata),
         }
 
 

@@ -66,6 +66,11 @@ PYTHONPATH=src python3 -m orchestrator \
   "implement a small budget ledger improvement"
 ```
 
+An injected router may implement `record_result(result, cost_records)`. The
+runner calls this optional hook after every terminal result and records whether
+feedback succeeded, allowing an external learning router to consume validation
+and actual-cost signals without becoming a LedgerLoop dependency.
+
 Example config (all sections optional; unset fields keep the mock defaults):
 
 ```json

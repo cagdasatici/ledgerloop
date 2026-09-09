@@ -20,6 +20,26 @@ from orchestrator.sqlite_store import SQLiteEventLog
 
 
 class LoopRunnerTests(unittest.TestCase):
+    def test_routing_feedback_failure_does_not_erase_successful_task_output(self):
+        class FeedbackRouter:
+            def __init__(self):
+                from orchestrator.router import Router
+
+                self.delegate = Router()
+
+            def route_task(self, task_description, user_override=""):
+                return self.delegate.route_task(task_description, user_override)
+
+            def record_result(self, result, cost_records):
+                raise RuntimeError("feedback unavailable")
+
+        runner = LoopRunner(config=default_config(), router=FeedbackRouter())
+        result = runner.run("implement a small helper", task_id="feedback_failure")
+
+        self.assertEqual(result.status, "succeeded")
+        feedback = [event for event in result.events if event["state"] == "learn"]
+        self.assertEqual(feedback[-1]["status"], "failed")
+
     def test_full_mock_loop_succeeds(self):
         runner = LoopRunner(config=default_config())
         result = runner.run("implement a small budget ledger improvement", task_id="task_success")
