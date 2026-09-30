@@ -10,3 +10,9 @@ dist/
 build/
 *.egg-info/
 data/memory/project_store.json
+
+# build artefacts + iCloud noise (added 2026-09-12)
+node_modules/
+.next/
+*.icloud
+* [0-9]
